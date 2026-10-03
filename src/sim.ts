@@ -41,7 +41,10 @@ export class Simulation {
   constructor(readonly world: World, private seed: number, roster: PetDef[], snap?: SimSnapshot) {
     this.simSec = snap?.simSec ?? world.snap.simMinute * 60;
     this.pets = snap?.pets ? structuredClone(snap.pets) : roster.map((def, i) => spawnPet(def, seed, i));
-    for (const p of this.pets) p.mind ??= newMind(); // saves from before System 2 had no mind
+    for (const p of this.pets) {
+      p.mind ??= newMind(); // saves from before System 2 had no mind
+      p.mind.claims ??= [];
+    }
     this.human = snap?.human ? structuredClone(snap.human) : { x: 820, y: 620, heading: -Math.PI / 2, moving: false };
   }
 
@@ -194,6 +197,7 @@ export class Simulation {
     p.energy = clamp(p.energy + ((p.chargeRate - drainPerMin) * DT) / 60, 0, 100);
 
     p.s1.action = dec.action;
+    p.s1.lastReason = dec.reason;
 
     const tod = obs.timeOfDay;
     if (p.mode !== prevMode && (p.mode === "dormant" || prevMode === "dormant" || p.mode === "sleeping" || prevMode === "sleeping")) {

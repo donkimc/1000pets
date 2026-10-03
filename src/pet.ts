@@ -17,6 +17,7 @@ export interface S1State {
   inspectCooldownUntil: number;
   tumbleUntil: number;
   lastThoughtSec: number;
+  lastReason?: string; // why System 1 chose its current action
 }
 
 export interface PetState {
@@ -44,6 +45,9 @@ export interface PetState {
 export type Suggestion = "none" | "seek_light" | "find_pet" | "inspect_object" | "rest";
 export const SUGGESTIONS: readonly Suggestion[] = ["none", "seek_light", "find_pet", "inspect_object", "rest"];
 
+/** Something another voice asserted. Speech is a claim, not a fact, until the pet verifies it itself. */
+export interface Claim { text: string; from: string; tSec: number; status: "unverified" | "supported" | "contradicted" }
+
 export interface Belief { text: string; confidence: number; updatedSec: number }
 
 /** Slow, deliberate state owned by System 2: beliefs, the current question, a long-running intention. */
@@ -52,13 +56,14 @@ export interface Mind {
   question: string;
   intention: { goal: string; sinceSec: number } | null;
   suggestion: { kind: Suggestion; untilSec: number } | null;
+  claims: Claim[]; // things heard from others, newest last
   episodes: string[]; // short notes of recent experience, newest last
   sensed: { light: number; temperature: number; seen: string[]; heard: string; touch: string };
   lastThoughtSec: number;
 }
 
 export function newMind(): Mind {
-  return { beliefs: [], question: "", intention: null, suggestion: null, episodes: [], sensed: { light: 0, temperature: 0, seen: [], heard: "", touch: "" }, lastThoughtSec: -1e9 };
+  return { beliefs: [], question: "", intention: null, suggestion: null, claims: [], episodes: [], sensed: { light: 0, temperature: 0, seen: [], heard: "", touch: "" }, lastThoughtSec: -1e9 };
 }
 
 export const PET_RADIUS = 18;

@@ -10,6 +10,8 @@ import { Simulation, type SimSnapshot } from "./sim.js";
 import type { PetDef } from "./pet.js";
 import { gatewayFromEnv, type ProviderStats } from "./llm.js";
 import { System2 } from "./system2.js";
+import { Conversation } from "./conversation.js";
+import type { Target } from "./speech.js";
 import { OBJECTS, ROOM, World, type WorldSnapshot } from "./world.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -180,6 +182,41 @@ function broadcast(payload: unknown) {
   const msg = JSON.stringify(payload);
   for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(msg);
 }
+
+const conversation = new Conversation(sim, llm, store, broadcast);
+system2.conversation = conversation;
+
+// Chat with the pets. Limited to 8 messages a minute because the site is public and every message costs tokens.
+const chatTimes: number[] = [];
+app.post("/api/chat", async (req, res) => {
+  const text = String(req.body?.text ?? "").trim();
+  if (!text || text.length > 300) {
+    res.status(400).json({ error: "message must be 1-300 characters" });
+    return;
+  }
+  const now = Date.now();
+  while (chatTimes.length && now - chatTimes[0] > 60_000) chatTimes.shift();
+  if (chatTimes.length >= 8) {
+    res.status(429).json({ error: "slow down a little" });
+    return;
+  }
+  chatTimes.push(now);
+  const toId = String(req.body?.to ?? "all");
+  let to: Target = { kind: "all" };
+  if (toId !== "all") {
+    if (!sim.pets.some((p) => p.id === toId)) {
+      res.status(404).json({ error: "no such pet" });
+      return;
+    }
+    to = { kind: "pet", id: toId };
+  }
+  const u = await conversation.humanSays(to, text, req.body?.anywhere !== false);
+  res.json({ ok: true, heardBy: u.heardBy, notHeardBy: u.notHeardBy });
+});
+app.get("/api/comms", async (req, res) => {
+  const limit = Math.min(Number(req.query.limit ?? 60) || 60, 500);
+  res.json(await store.readLog("comms", limit));
+});
 
 let lastLoggedHour = Math.floor(world.snap.simMinute / 60);
 

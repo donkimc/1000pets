@@ -29,6 +29,18 @@
 </section>
 
 <section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Talk</h2>
+  <div id="feed" class="space-y-2 max-h-80 overflow-auto mb-3 text-sm"></div>
+  <div class="flex gap-2">
+    <select id="to" class="bg-slate-700 rounded-lg px-2 py-2 text-sm"><option value="all">Everyone</option></select>
+    <input id="msg" maxlength="300" autocomplete="off" placeholder="Say something…" class="flex-1 min-w-0 bg-slate-700 rounded-lg px-3 py-2 text-base outline-none focus:ring-1 focus:ring-accent">
+    <button id="send" class="px-4 rounded-lg bg-accent text-emerald-950 font-semibold">Send</button>
+  </div>
+  <label class="flex items-center gap-2 mt-2 text-xs text-mute"><input id="anywhere" type="checkbox" checked> Hear me from anywhere (untick to talk spatially: pets must be within ~350 units)</label>
+  <div id="chatnote" class="text-xs text-mute mt-1 min-h-4"></div>
+</section>
+
+<section class="bg-panel rounded-xl p-4 mb-3">
   <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Pets</h2>
   <div id="pets" class="space-y-2"></div>
 </section>
@@ -66,7 +78,7 @@ function render() {
     b.classList.toggle("font-semibold", on); b.classList.toggle("bg-slate-700", !on);
   });
   if (state.env) { renderEnv(state.env); drawMap(); }
-  if (state.pets) renderPets(state.pets);
+  if (state.pets) { renderPets(state.pets); fillTargets(); }
 }
 
 const openPets = new Set();
@@ -177,6 +189,21 @@ function drawMap() {
     grad.addColorStop(0, "rgba(255,240,170,0.45)"); grad.addColorStop(1, "rgba(255,240,170,0)");
     g.fillStyle = grad; g.fillRect(0, 0, c.width, c.height);
   }
+  // speech bubbles
+  const now = Date.now();
+  for (const [id, b] of Object.entries(bubbles)) {
+    if (b.until < now) { delete bubbles[id]; continue; }
+    const pos = id === "human" ? state.human : (state.pets || []).find((p) => p.id === id);
+    if (!pos) continue;
+    g.font = "20px system-ui";
+    const words = b.text.split(" "), lines = []; let cur = "";
+    for (const w of words) { if ((cur + " " + w).trim().length > 24) { lines.push(cur); cur = w; } else cur = (cur + " " + w).trim(); }
+    if (cur) lines.push(cur);
+    const shown = lines.slice(0, 4), w = Math.max(...shown.map((l) => g.measureText(l).width)) + 20, h = shown.length * 24 + 14;
+    const bx = Math.max(4, Math.min(c.width - w - 4, pos.x - w / 2)), by = Math.max(4, pos.y - 52 - h);
+    g.fillStyle = "rgba(255,255,255,0.95)"; g.beginPath(); g.roundRect(bx, by, w, h, 10); g.fill();
+    g.fillStyle = "#101418"; shown.forEach((l, i) => g.fillText(l, bx + 10, by + 24 + i * 24));
+  }
 }
 
 function addEvent(ev, prepend) {
@@ -205,6 +232,52 @@ $("pause").onclick = () => post("/api/pause", { paused: !(state && state.paused)
 Promise.all([fetch("/api/status").then((r) => r.json()), fetch("/api/world").then((r) => r.json()), fetch("/api/events?limit=40").then((r) => r.json())])
   .then(([s, w, evs]) => { layout = w; state = { ...s, env: w.env, sunPatch: w.sunPatch, pets: w.pets, human: w.human }; evs.reverse().forEach((e) => addEvent(e, false)); render(); });
 
+const bubbles = {};
+const feed = $("feed"), seenIds = new Set();
+const petById = () => Object.fromEntries((state && state.pets || []).map((p) => [p.id, p]));
+const escH = (t) => String(t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+
+function addUtterance(u, live) {
+  if (seenIds.has(u.id)) return; seenIds.add(u.id);
+  const pets = petById(), fromPet = pets[u.from.id], human = u.from.kind === "human";
+  const who = human ? "You" : u.from.name, color = human ? "#f8fafc" : (fromPet ? fromPet.color : "#999");
+  const toName = u.to.kind === "human" ? "you" : u.to.kind === "pet" ? (u.to.name || u.to.id) : u.to.kind === "nearest" ? (u.to.name ? u.to.name : "nearby") : "everyone";
+  const heard = (u.heardBy || []).map((id) => (pets[id] ? pets[id].name : id));
+  const missed = (u.notHeardBy || []).map((id) => (pets[id] ? pets[id].name : id));
+  const t = u.trace || {};
+  const why = Object.entries(t).filter(([, v]) => v !== null && v !== "" && !(Array.isArray(v) && !v.length)).map(([k, v]) => `<div><span class="text-mute">${escH(k)}:</span> ${escH(typeof v === "object" ? JSON.stringify(v) : v)}</div>`).join("");
+  const el = document.createElement("div");
+  el.className = "rounded-lg bg-ink/60 p-2" + (human ? " ml-6" : " mr-6");
+  el.innerHTML = `<div class="flex items-center gap-1.5"><span class="inline-block w-2.5 h-2.5 rounded-full" style="background:${color}"></span><span class="font-semibold">${escH(who)}</span><span class="text-mute text-xs">to ${escH(toName)} · D${u.day} ${pad(u.hour)}:${pad(u.minute)}:${pad(u.second)}</span></div>` +
+    `<div class="mt-0.5">${escH(u.text)}</div>` +
+    `<div class="text-xs text-mute mt-0.5">heard by: ${heard.length ? escH(heard.join(", ")) : "nobody"}${missed.length ? ` · too far for ${escH(missed.join(", "))}` : ""} · <button class="underline" data-why>why?</button></div>` +
+    `<div class="hidden text-xs mt-1 space-y-0.5" data-trace>${why}</div>`;
+  el.querySelector("[data-why]").onclick = () => el.querySelector("[data-trace]").classList.toggle("hidden");
+  feed.appendChild(el);
+  while (feed.children.length > 80) feed.firstChild.remove();
+  if (live) { feed.scrollTop = feed.scrollHeight; bubbles[u.from.kind === "human" ? "human" : u.from.id] = { text: u.text, until: Date.now() + 9000 }; if (u.from.kind === "pet") $("chatnote").textContent = ""; }
+}
+
+fetch("/api/comms?limit=40").then((r) => r.json()).then((list) => { list.forEach((u) => addUtterance(u, false)); feed.scrollTop = feed.scrollHeight; });
+
+function fillTargets() {
+  const sel = $("to"), have = new Set([...sel.options].map((o) => o.value));
+  for (const p of (state && state.pets) || []) if (!have.has(p.id)) sel.add(new Option(p.name, p.id));
+}
+
+async function sendChat() {
+  const input = $("msg"), text = input.value.trim(); if (!text) return;
+  input.value = ""; $("chatnote").textContent = "sending…";
+  const r = await fetch("/api/chat", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ to: $("to").value, text, anywhere: $("anywhere").checked }) });
+  const d = await r.json();
+  if (!r.ok) { $("chatnote").textContent = d.error || "could not send"; return; }
+  const names = petById(), heard = d.heardBy.map((id) => names[id] ? names[id].name : id);
+  $("chatnote").textContent = d.notHeardBy.length ? `${d.notHeardBy.map((id) => names[id] ? names[id].name : id).join(", ")} is too far away to hear you. Walk closer or tick "Hear me from anywhere".` : heard.length ? `Heard by ${heard.join(", ")}. Waiting for replies (a few seconds)…` : "Nobody was close enough to hear you.";
+}
+$("send").onclick = sendChat;
+$("msg").addEventListener("keydown", (e) => { if (e.key === "Enter") sendChat(); e.stopPropagation(); });
+$("msg").addEventListener("keyup", (e) => e.stopPropagation());
+
 let wsRef = null;
 const joy = { dx: 0, dy: 0 }, keys = new Set();
 function sendInput() {
@@ -216,7 +289,7 @@ function sendInput() {
   if (wsRef && wsRef.readyState === 1) wsRef.send(JSON.stringify({ type: "input", dx, dy }));
 }
 setInterval(() => { if (joy.dx || joy.dy || keys.size) sendInput(); }, 100);
-addEventListener("keydown", (e) => { const k = e.key.toLowerCase(); if ("wasd".includes(k) && k.length === 1 || k.startsWith("arrow")) { keys.add(k); e.preventDefault(); } });
+addEventListener("keydown", (e) => { if (e.target && e.target.tagName === "INPUT") return; const k = e.key.toLowerCase(); if ("wasd".includes(k) && k.length === 1 || k.startsWith("arrow")) { keys.add(k); e.preventDefault(); } });
 addEventListener("keyup", (e) => { keys.delete(e.key.toLowerCase()); sendInput(); });
 const joyPad = $("pad"), knob = $("knob");
 function padMove(e) {
@@ -238,6 +311,7 @@ function connect() {
     const m = JSON.parse(e.data);
     if (m.type === "status") { state = m; render(); }
     else if (m.type === "events") m.events.forEach((ev) => addEvent(ev, true));
+    else if (m.type === "utterance") addUtterance(m.u, true);
   };
   wsRef = ws;
   ws.onclose = () => setTimeout(connect, 2000);

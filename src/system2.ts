@@ -13,15 +13,34 @@ export interface ParsedThought {
   intention: string | null;
   dropIntention: boolean;
   suggestion: Suggestion;
+  say: { to: "nearest" | "all"; meaning: string } | null;
 }
 
 const WORD = (v: number, lo: string, mid: string, hi: string) => (v < 0.34 ? lo : v < 0.67 ? mid : hi);
 
-export function buildPrompt(p: PetState, day: number, timeOfDay: number): { system: string; user: string } {
+/** The pet's own notes: everything a language model is allowed to know about it. */
+export function buildNotes(p: PetState, day: number, timeOfDay: number, nearby = 0): string {
   const t = p.traits;
   const hh = String(Math.floor(timeOfDay / 60)).padStart(2, "0");
   const mm = String(timeOfDay % 60).padStart(2, "0");
   const m = p.mind;
+  return [
+    `Time: day ${day}, ${hh}:${mm}.`,
+    `Personality: ${WORD(t.curiosity, "not very curious", "somewhat curious", "very curious")}, ${WORD(t.social, "reserved", "moderately social", "very social")}, ${WORD(t.caution, "bold", "fairly careful", "very cautious")}, ${WORD(t.patience, "impatient", "fairly patient", "very patient")}.`,
+    `Body: battery ${Math.round(p.energy)}%, currently ${p.mode}, doing "${p.s1.action}"${p.s1.lastReason ? ` because: ${p.s1.lastReason}` : ""}.`,
+    `Needs (0-1): curiosity ${p.drives.curiosity.toFixed(2)}, social ${p.drives.social.toFixed(2)}, rest ${p.drives.rest.toFixed(2)}.`,
+    `Senses now: light ${m.sensed.light}/100, temperature ${m.sensed.temperature}C${m.sensed.touch ? `, touching: ${m.sensed.touch}` : ""}${m.sensed.heard ? `, hearing ${m.sensed.heard}` : ""}.`,
+    `Sees: ${m.sensed.seen.length ? m.sensed.seen.join("; ") : "nothing in view"}.`,
+    `Within earshot: ${nearby ? `${nearby} other creature${nearby > 1 ? "s" : ""}` : "nobody"}.`,
+    `Recent experience:\n${m.episodes.length ? m.episodes.slice(-10).map((e) => "- " + e).join("\n") : "- (nothing yet)"}`,
+    `Current beliefs:\n${m.beliefs.length ? m.beliefs.map((b) => `- ${b.text} (${b.confidence.toFixed(2)})`).join("\n") : "- (none yet)"}`,
+    `Things others told me (claims, NOT verified facts):\n${m.claims.length ? m.claims.slice(-5).map((c) => `- ${c.text} [${c.status}]`).join("\n") : "- (nothing)"}`,
+    `Last question: ${m.question || "(none)"}`,
+    `Current intention: ${m.intention ? m.intention.goal : "(none)"}`,
+  ].join("\n");
+}
+
+export function buildPrompt(p: PetState, day: number, timeOfDay: number, nearby = 0): { system: string; user: string } {
   const system =
     `You are the slow, deliberate inner voice (System 2) of ${p.name}, a small pet living in a simple 2D room with two other pets and a human. ` +
     `You are not an assistant. You only know the notes you are given; never invent places, objects or events that are not in the notes. ` +
@@ -30,20 +49,11 @@ export function buildPrompt(p: PetState, day: number, timeOfDay: number): { syst
     `"beliefs": [{"text": string (max 80 chars), "confidence": number 0-1}] (0-3 items, only if the notes support them), ` +
     `"intention": string or null (a goal that could last hours or days, max 80 chars; null keeps your current one), ` +
     `"drop_intention": boolean, ` +
-    `"suggestion": one of ${SUGGESTIONS.map((s) => `"${s}"`).join(", ")} (a nudge to your fast System 1)}`;
-  const lines = [
-    `Time: day ${day}, ${hh}:${mm}.`,
-    `Personality: ${WORD(t.curiosity, "not very curious", "somewhat curious", "very curious")}, ${WORD(t.social, "reserved", "moderately social", "very social")}, ${WORD(t.caution, "bold", "fairly careful", "very cautious")}, ${WORD(t.patience, "impatient", "fairly patient", "very patient")}.`,
-    `Body: battery ${Math.round(p.energy)}%, currently ${p.mode}, doing "${p.s1.action}".`,
-    `Needs (0-1): curiosity ${p.drives.curiosity.toFixed(2)}, social ${p.drives.social.toFixed(2)}, rest ${p.drives.rest.toFixed(2)}.`,
-    `Senses now: light ${m.sensed.light}/100, temperature ${m.sensed.temperature}C${m.sensed.touch ? `, touching: ${m.sensed.touch}` : ""}${m.sensed.heard ? `, hearing ${m.sensed.heard}` : ""}.`,
-    `Sees: ${m.sensed.seen.length ? m.sensed.seen.join("; ") : "nothing in view"}.`,
-    `Recent experience:\n${m.episodes.length ? m.episodes.slice(-10).map((e) => "- " + e).join("\n") : "- (nothing yet)"}`,
-    `Current beliefs:\n${m.beliefs.length ? m.beliefs.map((b) => `- ${b.text} (${b.confidence.toFixed(2)})`).join("\n") : "- (none yet)"}`,
-    `Last question: ${m.question || "(none)"}`,
-    `Current intention: ${m.intention ? m.intention.goal : "(none)"}`,
-  ];
-  return { system, user: lines.join("\n") };
+    `"suggestion": one of ${SUGGESTIONS.map((x) => `"${x}"`).join(", ")} (a nudge to your fast System 1), ` +
+    `"say": null or {"to": "nearest" or "all", "meaning": string (max 100 chars: what you want to tell or ask, as plain ideas, not a sentence)}} ` +
+    `Use "say" only if someone is within earshot and you have something genuinely worth telling or asking; otherwise null. ` +
+    `Never state as fact something you only heard from others.`;
+  return { system, user: buildNotes(p, day, timeOfDay, nearby) };
 }
 
 /** Pull the first JSON object out of a model reply and validate it. Returns null if unusable. */
@@ -67,7 +77,9 @@ export function parseThought(text: string): ParsedThought | null {
     : [];
   const suggestion = SUGGESTIONS.includes(raw.suggestion) ? (raw.suggestion as Suggestion) : "none";
   const intention = typeof raw.intention === "string" && raw.intention.trim() ? str(raw.intention, 80) : null;
-  return { question: str(raw.question, 100), thought: str(raw.thought, 300), beliefs, intention, dropIntention: raw.drop_intention === true, suggestion };
+  const sayMeaning = str(raw.say?.meaning, 100);
+  const say = sayMeaning ? { to: raw.say?.to === "all" ? ("all" as const) : ("nearest" as const), meaning: sayMeaning } : null;
+  return { question: str(raw.question, 100), thought: str(raw.thought, 300), beliefs, intention, dropIntention: raw.drop_intention === true, suggestion, say };
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
@@ -95,7 +107,13 @@ export function applyThought(p: PetState, t: ParsedThought, nowSec: number): voi
   m.lastThoughtSec = nowSec;
 }
 
+export interface SpeechHook {
+  nearbyCount(p: PetState): number;
+  maybeSpeak(p: PetState, say: NonNullable<ParsedThought["say"]>, thought: ParsedThought, model: { provider: string; model: string }): Promise<void>;
+}
+
 export class System2 {
+  conversation?: SpeechHook;
   private due = new Map<string, number>();
   private busy = new Set<string>();
   private warned = false;
@@ -132,7 +150,7 @@ export class System2 {
   async think(p: PetState): Promise<void> {
     const tod = Math.floor(this.sim.simSec / 60) % 1440;
     const day = Math.floor(this.sim.simSec / 86400) + 1;
-    const { system, user } = buildPrompt(p, day, tod);
+    const { system, user } = buildPrompt(p, day, tod, this.conversation?.nearbyCount(p) ?? 0);
     let result;
     try {
       result = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: user }], { maxTokens: 900, temperature: 0.7 });
@@ -151,7 +169,8 @@ export class System2 {
     await this.store.append(`thoughts/${p.id}`, {
       system: 2, pet: p.id, tSec: nowSec, day, hour: Math.floor(tod / 60), minute: tod % 60,
       question: parsed.question, thought: parsed.thought, beliefs: parsed.beliefs, intention: p.mind.intention?.goal ?? null,
-      suggestion: parsed.suggestion, provider: result.provider, model: result.model, tokensIn: result.tokensIn, tokensOut: result.tokensOut,
+      suggestion: parsed.suggestion, say: parsed.say, provider: result.provider, model: result.model, tokensIn: result.tokensIn, tokensOut: result.tokensOut,
     });
+    if (parsed.say && this.conversation) await this.conversation.maybeSpeak(p, parsed.say, parsed, { provider: result.provider, model: result.model });
   }
 }
