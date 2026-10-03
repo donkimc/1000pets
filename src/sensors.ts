@@ -1,7 +1,7 @@
 // Virtual sensors. A pet only ever sees the world through these; it never reads WorldState directly.
 // Each sensor maps to hardware that can later exist on the ESP32 pet.
 import { clamp, normAngle } from "./geometry.js";
-import { PET_RADIUS, hueOf, type PetState } from "./pet.js";
+import { HUMAN_RADIUS, PET_RADIUS, hueOf, type HumanState, type PetState } from "./pet.js";
 import { Rng } from "./rng.js";
 import { OBJECTS, ROOM, SOLIDS, centerOf, pointInShape, shapeOf, type World } from "./world.js";
 
@@ -54,10 +54,13 @@ export function rayDistance(x: number, y: number, angle: number, others: Other[]
   return max;
 }
 
-export function sense(p: PetState, others: PetState[], world: World, sounds: Sound[], nowSec: number, rng: Rng): Observation {
+export const HUMAN_HUE = 280;
+
+export function sense(p: PetState, others: PetState[], world: World, sounds: Sound[], nowSec: number, rng: Rng, human?: HumanState): Observation {
   const env = world.env;
   const noise = (scale: number) => (rng.next() - 0.5) * 2 * scale;
-  const otherPts = others.filter((o) => o.id !== p.id);
+  const otherPts: Other[] = others.filter((o) => o.id !== p.id);
+  if (human) otherPts.push({ x: human.x, y: human.y });
 
   // Vision cone: abstract detections (no identities, only category, size and hue).
   const vision: Detection[] = [];
@@ -81,7 +84,8 @@ export function sense(p: PetState, others: PetState[], world: World, sounds: Sou
     const s = shapeOf(o);
     consider("static", c.x, c.y, s.type === "circle" ? s.r * 2 : Math.max(s.w, s.h), OBJECT_HUE[o.kind] ?? 0);
   }
-  for (const o of otherPts) consider("moving", o.x, o.y, PET_RADIUS * 2, hueOf(o.color));
+  for (const o of others) if (o.id !== p.id) consider("moving", o.x, o.y, PET_RADIUS * 2, hueOf(o.color));
+  if (human) consider("moving", human.x, human.y, HUMAN_RADIUS * 2.4, HUMAN_HUE);
   vision.sort((a, b) => a.distance - b.distance);
 
   // Hearing: loudest recent sound, attenuated with distance.

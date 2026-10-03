@@ -33,7 +33,7 @@ export interface PetState {
   mode: PetMode;
   drives: Drives;
   bumped: boolean;
-  touch: "wall" | "object" | "pet" | "pad" | null;
+  touch: "wall" | "object" | "pet" | "human" | "pad" | null;
   chargeRate: number; // %/min being taken in right now (solar or charger)
   lastPetSeenSec: number;
   rngState: number;
@@ -41,6 +41,10 @@ export interface PetState {
 }
 
 export const PET_RADIUS = 18;
+export const HUMAN_RADIUS = 16;
+
+/** The human participant: another body in the world, driven by the person using the site. */
+export interface HumanState { x: number; y: number; heading: number; moving: boolean }
 
 function hashString(s: string): number {
   let h = 2166136261;

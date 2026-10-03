@@ -20,6 +20,12 @@
 <section class="bg-panel rounded-xl p-4 mb-3">
   <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Room</h2>
   <canvas id="map" width="1000" height="700" class="w-full h-auto block rounded-lg bg-black"></canvas>
+  <div class="mt-3 flex items-center justify-between gap-4">
+    <div class="text-sm text-mute">Move yourself (the white diamond). Pets can see and bump into you. Use WASD or arrow keys on a computer.</div>
+    <div id="pad" class="relative shrink-0 w-32 h-32 rounded-full bg-slate-700/60 border border-line select-none" style="touch-action:none">
+      <div id="knob" class="absolute w-12 h-12 rounded-full bg-accent/80" style="left:40px;top:40px"></div>
+    </div>
+  </div>
 </section>
 
 <section class="bg-panel rounded-xl p-4 mb-3">
@@ -130,6 +136,13 @@ function drawMap() {
     g.fillStyle = "#fff"; g.font = "bold 22px system-ui"; g.textAlign = "center";
     g.fillText(p.name + (p.mode === "sleeping" ? " zz" : ""), p.x, p.y - 26); g.textAlign = "start";
   }
+  // human
+  if (state.human) {
+    const h = state.human;
+    g.save(); g.translate(h.x, h.y); g.fillStyle = "#f8fafc";
+    g.beginPath(); g.moveTo(0, -20); g.lineTo(18, 0); g.lineTo(0, 20); g.lineTo(-18, 0); g.closePath(); g.fill(); g.restore();
+    g.fillStyle = "#fff"; g.font = "bold 22px system-ui"; g.textAlign = "center"; g.fillText("You", h.x, h.y - 28); g.textAlign = "start";
+  }
   // darkness overlay: night and no lights
   g.fillStyle = `rgba(5,8,25,${0.65 * dark})`; g.fillRect(0, 0, c.width, c.height);
   if (e.lampOn) {
@@ -164,7 +177,34 @@ for (const s of SPEEDS) {
 $("pause").onclick = () => post("/api/pause", { paused: !(state && state.paused) });
 
 Promise.all([fetch("/api/status").then((r) => r.json()), fetch("/api/world").then((r) => r.json()), fetch("/api/events?limit=40").then((r) => r.json())])
-  .then(([s, w, evs]) => { layout = w; state = { ...s, env: w.env, sunPatch: w.sunPatch, pets: w.pets }; evs.reverse().forEach((e) => addEvent(e, false)); render(); });
+  .then(([s, w, evs]) => { layout = w; state = { ...s, env: w.env, sunPatch: w.sunPatch, pets: w.pets, human: w.human }; evs.reverse().forEach((e) => addEvent(e, false)); render(); });
+
+let wsRef = null;
+const joy = { dx: 0, dy: 0 }, keys = new Set();
+function sendInput() {
+  let dx = joy.dx, dy = joy.dy;
+  if (keys.size) {
+    dx = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
+    dy = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+  }
+  if (wsRef && wsRef.readyState === 1) wsRef.send(JSON.stringify({ type: "input", dx, dy }));
+}
+setInterval(() => { if (joy.dx || joy.dy || keys.size) sendInput(); }, 100);
+addEventListener("keydown", (e) => { const k = e.key.toLowerCase(); if ("wasd".includes(k) && k.length === 1 || k.startsWith("arrow")) { keys.add(k); e.preventDefault(); } });
+addEventListener("keyup", (e) => { keys.delete(e.key.toLowerCase()); sendInput(); });
+const joyPad = $("pad"), knob = $("knob");
+function padMove(e) {
+  const r = joyPad.getBoundingClientRect(), R = r.width / 2;
+  let x = e.clientX - (r.left + R), y = e.clientY - (r.top + R);
+  const len = Math.hypot(x, y), max = R - 24;
+  if (len > max) { x = x / len * max; y = y / len * max; }
+  knob.style.left = (R - 24 + x) + "px"; knob.style.top = (R - 24 + y) + "px";
+  joy.dx = x / max; joy.dy = y / max; sendInput();
+}
+joyPad.addEventListener("pointerdown", (e) => { joyPad.setPointerCapture(e.pointerId); padMove(e); });
+joyPad.addEventListener("pointermove", (e) => { if (joyPad.hasPointerCapture(e.pointerId)) padMove(e); });
+const padEnd = () => { joy.dx = joy.dy = 0; knob.style.left = "40px"; knob.style.top = "40px"; sendInput(); };
+joyPad.addEventListener("pointerup", padEnd); joyPad.addEventListener("pointercancel", padEnd);
 
 function connect() {
   const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
@@ -173,6 +213,7 @@ function connect() {
     if (m.type === "status") { state = m; render(); }
     else if (m.type === "events") m.events.forEach((ev) => addEvent(ev, true));
   };
+  wsRef = ws;
   ws.onclose = () => setTimeout(connect, 2000);
 }
 connect();

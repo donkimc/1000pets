@@ -1,7 +1,7 @@
 // Simulation: advances the world and every pet in fixed 5-second chunks of simulated time,
 // so results do not depend on tick rate or clock speed.
 import { clamp, normAngle } from "./geometry.js";
-import { PET_RADIUS, spawnPet, type PetDef, type PetState } from "./pet.js";
+import { HUMAN_RADIUS, PET_RADIUS, spawnPet, type HumanState, type PetDef, type PetState } from "./pet.js";
 import { Rng } from "./rng.js";
 import { sense, type Observation, type Sound } from "./sensors.js";
 import { decide, updateDrives, type Decision } from "./system1.js";
@@ -9,8 +9,9 @@ import { OBJECTS, ROOM, SOLIDS, centerOf, circleHitsShape, type World, type Worl
 
 export const DT = 5; // simulated seconds per chunk
 export const WALK_SPEED = 30; // units per simulated second at full speed
+export const HUMAN_SPEED = 90; // units per real second; the human moves in real time, not simulated time
 
-export interface SimSnapshot { simSec: number; pets: PetState[] }
+export interface SimSnapshot { simSec: number; pets: PetState[]; human?: HumanState }
 
 export interface Thought {
   system: 1;
@@ -34,15 +35,17 @@ const SOUND_SOURCES: Record<string, string> = { footsteps: "door", knock: "door"
 export class Simulation {
   simSec: number;
   pets: PetState[];
+  human: HumanState;
   private sounds: Sound[] = [];
 
   constructor(readonly world: World, private seed: number, roster: PetDef[], snap?: SimSnapshot) {
     this.simSec = snap?.simSec ?? world.snap.simMinute * 60;
     this.pets = snap?.pets ? structuredClone(snap.pets) : roster.map((def, i) => spawnPet(def, seed, i));
+    this.human = snap?.human ? structuredClone(snap.human) : { x: 820, y: 620, heading: -Math.PI / 2, moving: false };
   }
 
   snapshot(): SimSnapshot {
-    return { simSec: this.simSec, pets: this.pets };
+    return { simSec: this.simSec, pets: this.pets, human: this.human };
   }
 
   addPet(def: PetDef): PetState {
@@ -50,6 +53,35 @@ export class Simulation {
     const pet = spawnPet(def, this.seed, this.pets.length);
     this.pets.push(pet);
     return pet;
+  }
+
+  /** Move the human by a joystick vector (each component -1..1) for dtSec of real time, sliding along obstacles. */
+  moveHuman(dx: number, dy: number, dtSec: number): void {
+    const len = Math.hypot(dx, dy);
+    const h = this.human;
+    h.moving = false;
+    if (len < 0.05 || !Number.isFinite(len)) return;
+    const f = Math.min(1, len) / len;
+    const step = HUMAN_SPEED * dtSec;
+    const tryMove = (nx: number, ny: number) => {
+      if (this.humanBlocked(nx, ny)) return false;
+      h.x = nx;
+      h.y = ny;
+      return true;
+    };
+    const mx = dx * f * step, my = dy * f * step;
+    const movedX = tryMove(h.x + mx, h.y);
+    const movedY = tryMove(h.x, h.y + my);
+    if (movedX || movedY) {
+      h.moving = true;
+      h.heading = Math.atan2(dy, dx);
+    }
+  }
+
+  private humanBlocked(x: number, y: number): boolean {
+    if (x < HUMAN_RADIUS || y < HUMAN_RADIUS || x > ROOM.width - HUMAN_RADIUS || y > ROOM.height - HUMAN_RADIUS) return true;
+    if (SOLIDS.some((s) => circleHitsShape(x, y, HUMAN_RADIUS, s))) return true;
+    return this.pets.some((p) => Math.hypot(x - p.x, y - p.y) < PET_RADIUS + HUMAN_RADIUS);
   }
 
   step(toSimMs: number, maxChunks = Infinity): StepResult {
@@ -77,7 +109,7 @@ export class Simulation {
 
   private tickPet(p: PetState, out: StepResult) {
     const rng = new Rng(p.rngState);
-    const obs = sense(p, this.pets, this.world, this.sounds, this.simSec, rng);
+    const obs = sense(p, this.pets, this.world, this.sounds, this.simSec, rng, this.human);
     updateDrives(p, obs, DT, this.simSec);
     const decision = decide(p, obs, rng, this.simSec);
     this.act(p, decision, obs, out);
@@ -165,6 +197,7 @@ export class Simulation {
     if (x < PET_RADIUS || y < PET_RADIUS || x > ROOM.width - PET_RADIUS || y > ROOM.height - PET_RADIUS) return "wall";
     if (SOLIDS.some((s) => circleHitsShape(x, y, PET_RADIUS, s))) return "object";
     if (this.pets.some((o) => o.id !== p.id && Math.hypot(x - o.x, y - o.y) < PET_RADIUS * 2)) return "pet";
+    if (Math.hypot(x - this.human.x, y - this.human.y) < PET_RADIUS + HUMAN_RADIUS) return "human";
     return null;
   }
 }

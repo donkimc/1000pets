@@ -47,8 +47,13 @@ function petView() {
   }));
 }
 
+function humanView() {
+  const h = sim.human;
+  return { x: Math.round(h.x), y: Math.round(h.y), heading: Math.round(h.heading * 100) / 100, moving: h.moving };
+}
+
 function worldView() {
-  return { env: world.env, sunPatch: world.sunPatch(), pets: petView() };
+  return { env: world.env, sunPatch: world.sunPatch(), pets: petView(), human: humanView() };
 }
 
 // Control endpoints are open unless ADMIN_TOKEN is set.
@@ -122,6 +127,24 @@ app.post("/api/pause", requireAdmin, async (req, res) => {
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
 
+// The human is steered by joystick input over the WebSocket; input goes stale after 0.5 s so a lost
+// connection or released finger always stops the avatar.
+const input = { dx: 0, dy: 0, at: 0 };
+wss.on("connection", (ws) => {
+  ws.on("message", (raw) => {
+    try {
+      const m = JSON.parse(String(raw));
+      if (m?.type === "input" && Number.isFinite(m.dx) && Number.isFinite(m.dy)) {
+        input.dx = Math.max(-1, Math.min(1, m.dx));
+        input.dy = Math.max(-1, Math.min(1, m.dy));
+        input.at = Date.now();
+      }
+    } catch {
+      /* ignore malformed messages */
+    }
+  });
+});
+
 function broadcast(payload: unknown) {
   const msg = JSON.stringify(payload);
   for (const c of wss.clients) if (c.readyState === c.OPEN) c.send(msg);
@@ -129,7 +152,14 @@ function broadcast(payload: unknown) {
 
 let lastLoggedHour = Math.floor(world.snap.simMinute / 60);
 
+let lastTickAt = Date.now();
+
 async function tick() {
+  const now = Date.now();
+  const realDt = Math.min((now - lastTickAt) / 1000, 1);
+  lastTickAt = now;
+  const fresh = now - input.at < 500;
+  sim.moveHuman(fresh ? input.dx : 0, fresh ? input.dy : 0, realDt);
   clock.advance();
   // Cap work per tick so 1000x speed cannot starve the event loop; the world catches up on later ticks.
   const { events, thoughts } = sim.step(clock.simTimeMs, 400);

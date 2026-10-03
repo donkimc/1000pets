@@ -98,3 +98,23 @@ test("30 days: pets keep living (no permanent dormancy, all drives active)", () 
     assert.ok(dormant / samples < 0.5, `${p.id} dormant ${dormant}/${samples}`);
   }
 });
+
+test("human cannot leave the room, enter furniture, or overlap a pet", () => {
+  const sim = make(2);
+  for (let i = 0; i < 400; i++) sim.moveHuman(Math.cos(i / 7), Math.sin(i / 5), 0.25);
+  const h = sim.human;
+  assert.ok(h.x >= 16 && h.x <= ROOM.width - 16 && h.y >= 16 && h.y <= ROOM.height - 16);
+  assert.ok(!SOLIDS.some((s) => circleHitsShape(h.x, h.y, 15, s)));
+  sim.moveHuman(0, 0, 1);
+  assert.equal(sim.human.moving, false);
+});
+
+test("a pet sees the human, and the human blocks pets", () => {
+  const sim = make(2);
+  const p = sim.pets[0];
+  sim.human.x = p.x + 150; sim.human.y = p.y; p.heading = 0;
+  const obs = sense(p, sim.pets, sim.world, [], 0, new Rng(3), sim.human);
+  assert.ok(obs.vision.some((v) => v.category === "moving" && Math.abs(v.distance - 150) < 15));
+  sim.human.x = p.x + 30; // touching distance
+  assert.equal((sim as any).collision(p, p.x + 5, p.y), "human");
+});
