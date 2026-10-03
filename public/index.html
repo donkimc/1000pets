@@ -57,7 +57,7 @@ const ANOMALY = new Set(["curtain_stuck"]);
 
 function render() {
   if (!state) return;
-  $("time").textContent = `Day ${state.day} · ${pad(state.hour)}:${pad(state.minute)}`;
+  $("time").textContent = `Day ${state.day} · ${pad(state.hour)}:${pad(state.minute)}:${pad(state.second || 0)}`;
   $("meta").textContent = `${state.speed}× speed${state.paused ? " · paused" : ""}`;
   $("pause").textContent = state.paused ? "Resume" : "Pause";
   document.querySelectorAll("#speeds button").forEach((b) => {
@@ -101,7 +101,7 @@ async function loadThoughts(id) {
   mind.innerHTML = `<div><span class="text-mute">Question:</span> ${esc(m.question || "—")}</div><div><span class="text-mute">Intention:</span> ${esc(m.intention || "—")}</div>` +
     `<div class="text-mute mt-1">Beliefs</div>` + (m.beliefs.length ? m.beliefs.map((b) => `<div>• ${esc(b.text)} <span class="text-mute">${Math.round(b.confidence * 100)}%</span></div>`).join("") : "<div class='text-mute'>none yet</div>");
   ul.innerHTML = list.reverse().map((t) => {
-    const when = `<span class="text-mute tabular-nums">D${t.day} ${pad(t.hour)}:${pad(t.minute)}</span>`;
+    const when = `<span class="text-mute tabular-nums">D${t.day} ${pad(t.hour)}:${pad(t.minute)}:${pad(Math.floor(t.tSec % 60))}</span>`;
     if (t.system === 2) return `<li class="py-1 border-b border-line">${when} <span class="text-violet-400">S2</span> ${esc(t.thought)} <span class="text-mute">— ${esc(t.question)} · ${t.provider}</span></li>`;
     return `<li class="py-1 border-b border-line">${when} <span class="text-accent">S1</span> ${ACTION_TEXT[t.action] || t.action} <span class="text-mute">— ${esc(t.reason)}</span></li>`;
   }).join("") || '<li class="text-mute">no thoughts yet</li>';

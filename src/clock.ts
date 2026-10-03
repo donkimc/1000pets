@@ -28,13 +28,14 @@ export class SimClock {
     return this.simMs;
   }
 
-  /** Day number (1-based), hour and minute of simulated time. Day 1 starts at 00:00. */
-  get parts(): { day: number; hour: number; minute: number } {
-    const totalMin = Math.floor(this.simMs / 60000);
+  /** Day number (1-based), hour, minute and second of simulated time. Day 1 starts at 00:00:00. */
+  get parts(): { day: number; hour: number; minute: number; second: number } {
+    const totalSec = Math.floor(this.simMs / 1000);
     return {
-      day: Math.floor(totalMin / 1440) + 1,
-      hour: Math.floor((totalMin % 1440) / 60),
-      minute: totalMin % 60,
+      day: Math.floor(totalSec / 86400) + 1,
+      hour: Math.floor((totalSec % 86400) / 3600),
+      minute: Math.floor((totalSec % 3600) / 60),
+      second: totalSec % 60,
     };
   }
 

@@ -136,8 +136,9 @@ export class LlmGateway {
       const body = (await res.text().catch(() => "")).slice(0, 200);
       const n = (this.consecutiveErrors.get(p.name) ?? 0) + 1;
       this.consecutiveErrors.set(p.name, n);
-      // A 4xx is our request being wrong; back off harder so we do not hammer it.
-      this.fail(p, `HTTP ${res.status}: ${body}`, Math.min(600_000, (res.status >= 500 ? 10_000 : 30_000) * 2 ** (n - 1)));
+      // A bad key will not fix itself, so wait 10 minutes; other 4xx back off harder each time; 5xx retry sooner.
+      const auth = res.status === 401 || res.status === 403;
+      this.fail(p, `HTTP ${res.status}: ${body}`, auth ? 600_000 : Math.min(600_000, (res.status >= 500 ? 10_000 : 30_000) * 2 ** (n - 1)));
       throw new Error(`HTTP ${res.status}`);
     }
 
@@ -159,7 +160,13 @@ export class LlmGateway {
 }
 
 /** Build the gateway from environment variables. Missing keys simply leave a provider out. */
-export function gatewayFromEnv(env: NodeJS.ProcessEnv = process.env): LlmGateway {
+export function cleanKey(v: string | undefined): string {
+  // Keys pasted into a dashboard often pick up whitespace, a newline, quotes or a "Bearer " prefix.
+  return (v ?? "").trim().replace(/^["']|["']$/g, "").replace(/^Bearer\s+/i, "").trim();
+}
+
+export function gatewayFromEnv(raw: NodeJS.ProcessEnv = process.env): LlmGateway {
+  const env: NodeJS.ProcessEnv = { ...raw, GROQ_API_KEY: cleanKey(raw.GROQ_API_KEY), DEEPSEEK_API_KEY: cleanKey(raw.DEEPSEEK_API_KEY) };
   const providers: ProviderConfig[] = [];
   if (env.GROQ_API_KEY) {
     providers.push({

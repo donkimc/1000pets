@@ -79,3 +79,23 @@ test("applyThought merges beliefs, sets intention and a time-limited suggestion"
   assert.equal(p.mind.intention, null);
   assert.equal(p.mind.suggestion, null);
 });
+
+import { cleanKey, gatewayFromEnv } from "./llm.js";
+
+test("cleanKey strips whitespace, quotes and a Bearer prefix", () => {
+  assert.equal(cleanKey('  "gsk_abc"\n'), "gsk_abc");
+  assert.equal(cleanKey("Bearer gsk_abc"), "gsk_abc");
+  assert.equal(cleanKey(undefined), "");
+  assert.ok(gatewayFromEnv({ GROQ_API_KEY: "  \n" } as any).enabled === false);
+});
+
+test("a 401 backs the provider off for 10 minutes", async () => {
+  let t = 0;
+  const g = new LlmGateway([cfg("groq"), cfg("deepseek")], {
+    now: () => t,
+    fetchFn: async (u) => (String(u).includes("groq") ? new Response('{"error":"Invalid API Key"}', { status: 401 }) : ok("ok")),
+  });
+  assert.equal((await g.complete(msgs)).provider, "deepseek");
+  assert.ok(g.snapshot()[0].cooldownUntil >= 600_000);
+  assert.match(g.snapshot()[0].lastError, /401/);
+});

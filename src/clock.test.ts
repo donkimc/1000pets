@@ -24,3 +24,8 @@ test("paused clock does not advance", () => {
 test("rejects invalid speed", () => {
   assert.throws(() => new SimClock().setSpeed(7));
 });
+
+test("parts include seconds", () => {
+  const c = new SimClock((86400 + 3600 * 2 + 60 * 3 + 4) * 1000, 0);
+  assert.deepEqual(c.parts, { day: 2, hour: 2, minute: 3, second: 4 });
+});
