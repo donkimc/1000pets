@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#101418">
+<title>1000pets</title>
+<style>
+  :root { --bg:#101418; --card:#1a2027; --fg:#e8edf2; --muted:#8a96a3; --accent:#6cc4a1; }
+  * { box-sizing:border-box; }
+  body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
+         font:16px/1.4 system-ui,-apple-system,sans-serif; }
+  h1 { font-size:20px; margin:0 0 12px; }
+  .card { background:var(--card); border-radius:12px; padding:14px; margin-bottom:12px; }
+  .time { font-size:28px; font-weight:600; }
+  .muted { color:var(--muted); font-size:14px; }
+  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
+  button { flex:1 1 60px; padding:12px; border:0; border-radius:10px; background:#27313b;
+           color:var(--fg); font-size:16px; }
+  button.on { background:var(--accent); color:#06231a; font-weight:600; }
+</style>
+</head>
+<body>
+<h1>1000pets</h1>
+<div class="card">
+  <div class="time" id="time">--</div>
+  <div class="muted" id="meta">connecting…</div>
+  <div class="row" id="speeds"></div>
+  <div class="row"><button id="pause">Pause</button></div>
+</div>
+<script>
+const SPEEDS = [1, 10, 100, 1000];
+let state = null;
+const $ = (id) => document.getElementById(id);
+const pad = (n) => String(n).padStart(2, "0");
+
+function render() {
+  if (!state) return;
+  $("time").textContent = `Day ${state.day} · ${pad(state.hour)}:${pad(state.minute)}`;
+  $("meta").textContent = `${state.speed}× speed${state.paused ? " · paused" : ""} · run ${state.runId}`;
+  $("pause").textContent = state.paused ? "Resume" : "Pause";
+  document.querySelectorAll("#speeds button").forEach((b) => b.classList.toggle("on", Number(b.dataset.s) === state.speed));
+}
+
+async function post(url, body) {
+  const r = await fetch(url, { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(body) });
+  if (r.ok) { state = await r.json(); render(); }
+}
+
+for (const s of SPEEDS) {
+  const b = document.createElement("button");
+  b.textContent = s + "×"; b.dataset.s = s;
+  b.onclick = () => post("/api/speed", { speed: s });
+  $("speeds").appendChild(b);
+}
+$("pause").onclick = () => post("/api/pause", { paused: !(state && state.paused) });
+
+fetch("/api/status").then((r) => r.json()).then((s) => { state = s; render(); });
+function connect() {
+  const ws = new WebSocket(`${location.protocol === "https:" ? "wss" : "ws"}://${location.host}/ws`);
+  ws.onmessage = (e) => { const m = JSON.parse(e.data); if (m.type === "status") { state = m; render(); } };
+  ws.onclose = () => setTimeout(connect, 2000);
+}
+connect();
+</script>
+</body>
+</html>
