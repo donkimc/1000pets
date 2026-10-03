@@ -102,6 +102,18 @@ export class LlmGateway {
     if (cooldownMs > 0) st.cooldownUntil = Math.max(st.cooldownUntil, this.now() + cooldownMs);
   }
 
+  /** One tiny live call to a single provider, ignoring cooldowns, to check its key and model. */
+  async ping(name: string): Promise<{ ok: boolean; provider: string; model?: string; reply?: string; error?: string }> {
+    const p = this.providers.find((x) => x.name === name);
+    if (!p) return { ok: false, provider: name, error: "provider not configured (is its API key set?)" };
+    try {
+      const r = await this.callProvider(p, [{ role: "user", content: "Reply with the single word: ok" }], { maxTokens: 200, temperature: 0 });
+      return { ok: true, provider: p.name, model: r.model, reply: r.text.trim().slice(0, 40) };
+    } catch (e: any) {
+      return { ok: false, provider: p.name, model: p.model, error: this.stats.get(p.name)!.lastError || e.message };
+    }
+  }
+
   private async callProvider(p: ProviderConfig, messages: ChatMessage[], opts: { maxTokens?: number; temperature?: number }): Promise<LlmResult> {
     const st = this.stats.get(p.name)!;
     this.recent.get(p.name)!.push(this.now());

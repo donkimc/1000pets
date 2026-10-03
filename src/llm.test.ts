@@ -99,3 +99,14 @@ test("a 401 backs the provider off for 10 minutes", async () => {
   assert.ok(g.snapshot()[0].cooldownUntil >= 600_000);
   assert.match(g.snapshot()[0].lastError, /401/);
 });
+
+test("ping reports success and failure for one provider", async () => {
+  const g = new LlmGateway([cfg("groq"), cfg("deepseek")], {
+    fetchFn: async (u) => (String(u).includes("deepseek") ? new Response('{"error":"Invalid API Key"}', { status: 401 }) : ok("ok")),
+  });
+  assert.equal((await g.ping("groq")).ok, true);
+  const bad = await g.ping("deepseek");
+  assert.equal(bad.ok, false);
+  assert.match(bad.error ?? "", /401/);
+  assert.equal((await g.ping("nope")).ok, false);
+});

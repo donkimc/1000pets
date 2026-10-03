@@ -113,7 +113,12 @@ async function loadLlm() {
   $("llm").innerHTML = !d.enabled ? '<div class="text-mute">No API keys set, System 2 is off.</div>' : d.providers.map((p) => {
     const status = p.cooldownSec > 0 ? `<span class="text-amber-400">cooling down ${p.cooldownSec > 3600 ? Math.round(p.cooldownSec / 3600) + " h" : p.cooldownSec + " s"}</span>` : '<span class="text-accent">ready</span>';
     return `<div><div class="flex justify-between"><span class="font-semibold">${p.name}</span>${status}</div><div class="text-xs text-mute">${p.model} · ${p.calls} calls · ${(p.tokensIn + p.tokensOut).toLocaleString()} tokens${p.spendUsd ? " · $" + p.spendUsd.toFixed(3) : ""}${p.failures ? " · " + p.failures + " failed" : ""}</div>${p.lastError ? `<div class="text-xs text-mute truncate">last error: ${p.lastError}</div>` : ""}</div>`;
-  }).join("");
+  }).join("") + '<div class="flex gap-2 pt-1">' + d.providers.map((p) => `<button data-test="${p.name}" class="flex-1 py-2 rounded-lg bg-slate-700 text-xs active:bg-slate-600">Test ${p.name}</button>`).join("") + '</div><div id="llmtest" class="text-xs text-mute break-words"></div>';
+  document.querySelectorAll("[data-test]").forEach((b) => b.onclick = async () => {
+    $("llmtest").textContent = "testing " + b.dataset.test + "…";
+    const r = await fetch("/api/llm/test/" + b.dataset.test).then((x) => x.json());
+    $("llmtest").textContent = r.ok ? `${r.provider} OK (${r.model}) replied: ${r.reply}` : `${r.provider || b.dataset.test} FAILED: ${r.error}`;
+  });
 }
 loadLlm(); setInterval(loadLlm, 10000);
 

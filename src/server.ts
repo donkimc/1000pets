@@ -118,6 +118,17 @@ app.get("/api/mind/:id", (req, res) => {
   }
   res.json({ question: p.mind.question, intention: p.mind.intention?.goal ?? null, beliefs: p.mind.beliefs, suggestion: p.mind.suggestion?.kind ?? null, episodes: p.mind.episodes });
 });
+// Tiny live check of one provider's key and model. Limited to one call per provider per 20 s.
+const lastPing = new Map<string, number>();
+app.get("/api/llm/test/:provider", async (req, res) => {
+  const name = req.params.provider;
+  if (Date.now() - (lastPing.get(name) ?? 0) < 20_000) {
+    res.status(429).json({ ok: false, error: "try again in a few seconds" });
+    return;
+  }
+  lastPing.set(name, Date.now());
+  res.json(await llm.ping(name));
+});
 app.get("/api/llm", (_req, res) => {
   const now = Date.now();
   res.json({ enabled: llm.enabled, providers: llm.snapshot().map((s) => ({ ...s, cooldownSec: Math.max(0, Math.round((s.cooldownUntil - now) / 1000)) })) });
