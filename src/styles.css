@@ -1,0 +1,10 @@
+@import "tailwindcss";
+@source "../public/index.html";
+
+@theme {
+  --color-ink: #101418;
+  --color-panel: #1a2027;
+  --color-line: #26303a;
+  --color-mute: #8a96a3;
+  --color-accent: #6cc4a1;
+}

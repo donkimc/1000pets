@@ -5,54 +5,32 @@
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#101418">
 <title>1000pets</title>
-<style>
-  :root { --bg:#101418; --card:#1a2027; --fg:#e8edf2; --muted:#8a96a3; --accent:#6cc4a1; }
-  * { box-sizing:border-box; }
-  body { margin:0; padding:16px; background:var(--bg); color:var(--fg);
-         font:16px/1.4 system-ui,-apple-system,sans-serif; }
-  h1 { font-size:20px; margin:0 0 12px; }
-  h2 { font-size:14px; margin:0 0 8px; color:var(--muted); text-transform:uppercase; letter-spacing:.05em; }
-  .card { background:var(--card); border-radius:12px; padding:14px; margin-bottom:12px; }
-  .time { font-size:28px; font-weight:600; }
-  .muted { color:var(--muted); font-size:14px; }
-  .row { display:flex; gap:8px; flex-wrap:wrap; margin-top:10px; }
-  button { flex:1 1 60px; padding:12px; border:0; border-radius:10px; background:#27313b;
-           color:var(--fg); font-size:16px; }
-  button.on { background:var(--accent); color:#06231a; font-weight:600; }
-  canvas { width:100%; height:auto; display:block; border-radius:8px; background:#0b0e11; }
-  .grid { display:grid; grid-template-columns:1fr 1fr; gap:8px 16px; }
-  .k { color:var(--muted); font-size:13px; }
-  .v { font-size:17px; font-weight:600; }
-  #events { list-style:none; margin:0; padding:0; max-height:260px; overflow:auto; font-size:14px; }
-  #events li { padding:6px 0; border-bottom:1px solid #26303a; }
-  #events .t { color:var(--muted); margin-right:6px; font-variant-numeric:tabular-nums; }
-  #events .anom { color:#f0a35c; }
-</style>
+<link rel="stylesheet" href="/app.css">
 </head>
-<body>
-<h1>1000pets</h1>
+<body class="bg-ink text-slate-100 font-sans antialiased p-4 pb-10 max-w-xl mx-auto">
+<h1 class="text-xl font-semibold mb-3">1000pets</h1>
 
-<div class="card">
-  <div class="time" id="time">--</div>
-  <div class="muted" id="meta">connecting…</div>
-  <div class="row" id="speeds"></div>
-  <div class="row"><button id="pause">Pause</button></div>
-</div>
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <div class="text-3xl font-semibold tabular-nums" id="time">--</div>
+  <div class="text-sm text-mute" id="meta">connecting…</div>
+  <div class="flex gap-2 mt-3" id="speeds"></div>
+  <button id="pause" class="mt-2 w-full py-3 rounded-lg bg-slate-700 active:bg-slate-600">Pause</button>
+</section>
 
-<div class="card">
-  <h2>Room</h2>
-  <canvas id="map" width="1000" height="700"></canvas>
-</div>
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Room</h2>
+  <canvas id="map" width="1000" height="700" class="w-full h-auto block rounded-lg bg-black"></canvas>
+</section>
 
-<div class="card">
-  <h2>Environment</h2>
-  <div class="grid" id="env"></div>
-</div>
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Environment</h2>
+  <div class="grid grid-cols-2 gap-x-4 gap-y-2" id="env"></div>
+</section>
 
-<div class="card">
-  <h2>Events</h2>
-  <ul id="events"></ul>
-</div>
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Events</h2>
+  <ul id="events" class="max-h-64 overflow-auto text-sm"></ul>
+</section>
 
 <script>
 const SPEEDS = [1, 10, 100, 1000];
@@ -66,7 +44,11 @@ function render() {
   $("time").textContent = `Day ${state.day} · ${pad(state.hour)}:${pad(state.minute)}`;
   $("meta").textContent = `${state.speed}× speed${state.paused ? " · paused" : ""}`;
   $("pause").textContent = state.paused ? "Resume" : "Pause";
-  document.querySelectorAll("#speeds button").forEach((b) => b.classList.toggle("on", Number(b.dataset.s) === state.speed));
+  document.querySelectorAll("#speeds button").forEach((b) => {
+    const on = Number(b.dataset.s) === state.speed;
+    b.classList.toggle("bg-accent", on); b.classList.toggle("text-emerald-950", on);
+    b.classList.toggle("font-semibold", on); b.classList.toggle("bg-slate-700", !on);
+  });
   if (state.env) { renderEnv(state.env); drawMap(); }
 }
 
@@ -77,13 +59,13 @@ function renderEnv(e) {
     ["Curtain", e.curtainOpen ? "open" : "closed"], ["Door", e.doorOpen ? "open" : "closed"],
     ["Lamp", e.lampOn ? "on" : "off"], ["Heater", e.heaterOn ? "on" : "off"],
   ];
-  $("env").innerHTML = rows.map(([k, v]) => `<div><div class="k">${k}</div><div class="v">${v}</div></div>`).join("");
+  $("env").innerHTML = rows.map(([k, v]) => `<div><div class="text-xs text-mute">${k}</div><div class="text-base font-semibold">${v}</div></div>`).join("");
 }
 
 function drawMap() {
   if (!layout || !state.env) return;
   const c = $("map"), g = c.getContext("2d"), e = state.env;
-  const dark = 1 - Math.min(1, 0.12 + e.sunIntensity * 0.9 + (e.lampOn ? 0.25 : 0));
+  const dark = 1 - Math.min(1, 0.4 + e.sunIntensity * 0.8 + (e.lampOn ? 0.25 : 0));
   g.clearRect(0, 0, c.width, c.height);
   g.fillStyle = "#2a2f36"; g.fillRect(0, 0, c.width, c.height);
   // sun patch
@@ -112,7 +94,8 @@ function drawMap() {
 
 function addEvent(ev, prepend) {
   const li = document.createElement("li");
-  li.innerHTML = `<span class="t">D${ev.day} ${pad(ev.hour)}:${pad(ev.minute)}</span><span class="${ANOMALY.has(ev.type) ? "anom" : ""}">${ev.type.replace(/_/g, " ")}${ev.detail ? " · " + ev.detail : ""}</span>`;
+  li.className = "py-1.5 border-b border-line";
+  li.innerHTML = `<span class="text-mute mr-1.5 tabular-nums">D${ev.day} ${pad(ev.hour)}:${pad(ev.minute)}</span><span class="${ANOMALY.has(ev.type) ? "text-amber-400" : ""}">${ev.type.replace(/_/g, " ")}${ev.detail ? " · " + ev.detail : ""}</span>`;
   const ul = $("events");
   if (prepend) ul.prepend(li); else ul.appendChild(li);
   while (ul.children.length > 60) ul.lastChild.remove();
@@ -125,6 +108,7 @@ async function post(url, body) {
 
 for (const s of SPEEDS) {
   const b = document.createElement("button");
+  b.className = "flex-1 py-3 rounded-lg bg-slate-700 active:bg-slate-600";
   b.textContent = s + "×"; b.dataset.s = s;
   b.onclick = () => post("/api/speed", { speed: s });
   $("speeds").appendChild(b);

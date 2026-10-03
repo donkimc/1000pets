@@ -2,3 +2,4 @@ node_modules/
 dist/
 data/runs/
 .env
+public/app.css

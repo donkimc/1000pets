@@ -4,21 +4,26 @@
   "private": true,
   "description": "Multi-pet artificial-life simulator with a mobile web interface",
   "type": "module",
-  "engines": { "node": ">=20" },
+  "engines": {
+    "node": ">=20"
+  },
   "scripts": {
-    "dev": "tsx watch src/server.ts",
-    "build": "tsc -p tsconfig.json",
+    "dev": "npm run build:css && tsx watch src/server.ts",
+    "build": "npm run build:css && tsc -p tsconfig.json",
     "start": "node dist/server.js",
-    "test": "tsx --test src/*.test.ts"
+    "test": "tsx --test src/*.test.ts",
+    "build:css": "tailwindcss -i src/styles.css -o public/app.css --minify"
   },
   "dependencies": {
     "express": "^4.21.2",
     "ws": "^8.18.0"
   },
   "devDependencies": {
+    "@tailwindcss/cli": "^4.3.3",
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.0",
     "@types/ws": "^8.5.13",
+    "tailwindcss": "^4.3.3",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2"
   }
