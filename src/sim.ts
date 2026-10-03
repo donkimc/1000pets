@@ -1,7 +1,7 @@
 // Simulation: advances the world and every pet in fixed 5-second chunks of simulated time,
 // so results do not depend on tick rate or clock speed.
 import { clamp, normAngle } from "./geometry.js";
-import { HUMAN_RADIUS, PET_RADIUS, newMind, spawnPet, type HumanState, type PetDef, type PetState } from "./pet.js";
+import { HUMAN_RADIUS, PET_PALETTE, PET_RADIUS, newMind, newStats, spawnPet, type HumanState, type PetDef, type PetState } from "./pet.js";
 import { Rng } from "./rng.js";
 import { sense, type Observation, type Sound } from "./sensors.js";
 import { decide, updateDrives, type Decision } from "./system1.js";
@@ -44,8 +44,25 @@ export class Simulation {
     for (const p of this.pets) {
       p.mind ??= newMind(); // saves from before System 2 had no mind
       p.mind.claims ??= [];
+      p.stats ??= newStats();
+      // The config file is the source of truth for names, colours and traits of the default pets.
+      const def = roster.find((d) => d.id === p.id);
+      if (def) Object.assign(p, { name: def.name, color: def.color, traits: def.traits });
     }
     this.human = snap?.human ? structuredClone(snap.human) : { x: 820, y: 620, heading: -Math.PI / 2, moving: false };
+  }
+
+  /** Compact picture of every pet and the environment, logged every 15 simulated minutes for the dashboard charts. */
+  metrics() {
+    const m = Math.floor(this.simSec / 60);
+    const env = this.world.env;
+    const r = (v: number) => Math.round(v * 100) / 100;
+    return {
+      simMinute: m, day: Math.floor(m / 1440) + 1, hour: Math.floor((m % 1440) / 60), minute: m % 60,
+      pets: this.pets.map((p) => ({ id: p.id, energy: r(p.energy), curiosity: r(p.drives.curiosity), social: r(p.drives.social), rest: r(p.drives.rest), mode: p.mode })),
+      env: { indoorTemp: env.indoorTemp, outdoorTemp: env.outdoorTemp, sun: env.sunIntensity, weather: env.weather },
+      cum: this.pets.reduce((a, p) => ({ s1: a.s1 + p.stats.s1Thoughts, s2: a.s2 + p.stats.s2Thoughts, spoke: a.spoke + p.stats.spoke }), { s1: 0, s2: 0, spoke: 0 }),
+    };
   }
 
   snapshot(): SimSnapshot {
@@ -54,7 +71,7 @@ export class Simulation {
 
   addPet(def: PetDef): PetState {
     if (this.pets.some((p) => p.id === def.id)) throw new Error(`pet ${def.id} already exists`);
-    const pet = spawnPet(def, this.seed, this.pets.length);
+    const pet = spawnPet({ ...def, color: def.color || PET_PALETTE[this.pets.length % PET_PALETTE.length] }, this.seed, this.pets.length);
     this.pets.push(pet);
     return pet;
   }
@@ -198,6 +215,7 @@ export class Simulation {
 
     p.s1.action = dec.action;
     p.s1.lastReason = dec.reason;
+    p.stats.actionSec[dec.action] = (p.stats.actionSec[dec.action] ?? 0) + DT;
 
     const tod = obs.timeOfDay;
     if (p.mode !== prevMode && (p.mode === "dormant" || prevMode === "dormant" || p.mode === "sleeping" || prevMode === "sleeping")) {
@@ -208,8 +226,10 @@ export class Simulation {
     if (dec.action !== prevAction && !["avoid", "pause"].includes(dec.action)) this.note(p, `${dec.reason} (light ${obs.light}, battery ${Math.round(p.energy)}%)`);
 
     // Record a thought when the action changes (not more than once every 15 simulated seconds).
-    if (dec.action !== prevAction && this.simSec - p.s1.lastThoughtSec >= 15) {
+    const quiet = ["avoid", "pause", "wander"].includes(dec.action) ? 180 : 15; // reflexes repeat a lot; log them sparingly
+    if (dec.action !== prevAction && this.simSec - p.s1.lastThoughtSec >= quiet) {
       p.s1.lastThoughtSec = this.simSec;
+      p.stats.s1Thoughts++;
       out.thoughts.push({
         system: 1,
         pet: p.id,

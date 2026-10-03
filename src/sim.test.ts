@@ -118,3 +118,19 @@ test("a pet sees the human, and the human blocks pets", () => {
   sim.human.x = p.x + 30; // touching distance
   assert.equal((sim as any).collision(p, p.x + 5, p.y), "human");
 });
+
+import { Store } from "./store.js";
+import { mkdtempSync } from "node:fs";
+import { tmpdir } from "node:os";
+import path from "node:path";
+
+test("readLog returns the last N records even when lines are large and the file is big", async () => {
+  const store = await Store.open(mkdtempSync(path.join(tmpdir(), "log-")), "r");
+  for (let i = 0; i < 400; i++) await store.append("big", { i, pad: "x".repeat(i % 7 === 0 ? 5000 : 40) });
+  const last = await store.readLog<any>("big", 25);
+  assert.equal(last.length, 25);
+  assert.equal(last[0].i, 375);
+  assert.equal(last[24].i, 399);
+  assert.equal((await store.readLog<any>("big", 1000)).length, 400);
+  assert.deepEqual(await store.readLog("missing"), []);
+});

@@ -1,5 +1,5 @@
 [
-  { "id": "pip",  "name": "Pip",  "color": "#f59e0b", "traits": { "curiosity": 0.8, "social": 0.5, "caution": 0.2, "patience": 0.4 }, "start": { "x": 220, "y": 300 } },
-  { "id": "moss", "name": "Moss", "color": "#60a5fa", "traits": { "curiosity": 0.3, "social": 0.4, "caution": 0.8, "patience": 0.8 }, "start": { "x": 520, "y": 540 } },
-  { "id": "coco", "name": "Coco", "color": "#f472b6", "traits": { "curiosity": 0.5, "social": 0.8, "caution": 0.4, "patience": 0.5 }, "start": { "x": 760, "y": 400 } }
+  { "id": "pip",  "name": "Pip",  "color": "#3987e5", "traits": { "curiosity": 0.8, "social": 0.5, "caution": 0.2, "patience": 0.4 }, "start": { "x": 220, "y": 300 } },
+  { "id": "moss", "name": "Moss", "color": "#d95926", "traits": { "curiosity": 0.3, "social": 0.4, "caution": 0.8, "patience": 0.8 }, "start": { "x": 520, "y": 540 } },
+  { "id": "coco", "name": "Coco", "color": "#199e70", "traits": { "curiosity": 0.5, "social": 0.8, "caution": 0.4, "patience": 0.5 }, "start": { "x": 760, "y": 400 } }
 ]

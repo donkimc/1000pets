@@ -12,6 +12,7 @@ import { gatewayFromEnv, type ProviderStats } from "./llm.js";
 import { System2 } from "./system2.js";
 import { Conversation } from "./conversation.js";
 import type { Target } from "./speech.js";
+import { readdir, stat } from "node:fs/promises";
 import { OBJECTS, ROOM, World, type WorldSnapshot } from "./world.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -101,7 +102,7 @@ app.post("/api/pets", requireAdmin, async (req, res) => {
   }
   try {
     sim.addPet({
-      id, name: String(b.name).slice(0, 24), color: /^#[0-9a-fA-F]{6}$/.test(b.color) ? b.color : "#a3e635",
+      id, name: String(b.name).slice(0, 24), color: /^#[0-9a-fA-F]{6}$/.test(b.color) ? b.color : "",
       traits: { curiosity: num(b.traits?.curiosity, 0.5), social: num(b.traits?.social, 0.5), caution: num(b.traits?.caution, 0.5), patience: num(b.traits?.patience, 0.5) },
       start: { x: 500, y: 300 },
     });
@@ -218,7 +219,63 @@ app.get("/api/comms", async (req, res) => {
   res.json(await store.readLog("comms", limit));
 });
 
+// ---- dashboard data ----
+const startedAt = Date.now();
+app.get("/api/metrics", async (req, res) => {
+  const hours = Math.min(Number(req.query.hours ?? 24) || 24, 24 * 60);
+  const points = Math.min(Number(req.query.points ?? 96) || 96, 400);
+  const rows = await store.readLog<any>("metrics", hours * 4 + 1);
+  const stride = Math.max(1, Math.ceil(rows.length / points));
+  res.json(rows.filter((_, i) => i % stride === 0 || i === rows.length - 1));
+});
+
+// All pets' thoughts merged, newest first; filter with ?pet=pip&system=2
+app.get("/api/thoughts", async (req, res) => {
+  const limit = Math.min(Number(req.query.limit ?? 40) || 40, 200);
+  const pets = req.query.pet ? [String(req.query.pet)] : sim.pets.map((p) => p.id);
+  const sys = Number(req.query.system) || 0;
+  const all: any[] = [];
+  for (const id of pets) {
+    if (!/^[a-z0-9_-]{1,32}$/.test(id)) continue;
+    for (const t of await store.readLog<any>(`thoughts/${id}`, 300)) if (!sys || t.system === sys) all.push(t);
+  }
+  res.json(all.sort((a, b) => b.tSec - a.tSec).slice(0, limit));
+});
+
+app.get("/api/dashboard", async (_req, res) => {
+  const comms = await store.readLog<any>("comms", 5000);
+  const nowMs = Date.now();
+  const realMs = (id: string) => Number(String(id).split("-")[0]) || 0;
+  const pet = comms.filter((u) => u.from.kind === "pet");
+  const files: { name: string; bytes: number }[] = [];
+  for (const dir of ["", "thoughts"]) {
+    for (const f of await readdir(path.join(store.dir, dir)).catch(() => [] as string[])) {
+      if (!/\.jsonl?$/.test(f)) continue;
+      const st = await stat(path.join(store.dir, dir, f)).catch(() => null);
+      if (st) files.push({ name: (dir ? dir + "/" : "") + f, bytes: st.size });
+    }
+  }
+  const sinceSim = sim.simSec - 86400;
+  res.json({
+    ...status(), uptimeSec: Math.round(process.uptime()), serverStartedAt: startedAt, memMB: Math.round(process.memoryUsage().rss / 1048576),
+    pets: sim.pets.map((p) => ({
+      id: p.id, name: p.name, color: p.color, energy: Math.round(p.energy), mode: p.mode, action: p.s1.action, stats: p.stats,
+      beliefs: p.mind.beliefs.length, claims: p.mind.claims.length, intention: p.mind.intention?.goal ?? null,
+    })),
+    comms: {
+      total: comms.length,
+      fromHuman: comms.filter((u) => u.from.kind === "human").length,
+      petInitiative: pet.filter((u) => u.trace?.kind === "initiative").length,
+      petReplies: pet.filter((u) => u.trace?.kind === "reply").length,
+      lastRealHour: pet.filter((u) => nowMs - realMs(u.id) < 3600_000).length,
+      lastSimDay: pet.filter((u) => u.tSec > sinceSim).length,
+    },
+    storage: files.sort((a, b) => b.bytes - a.bytes),
+  });
+});
+
 let lastLoggedHour = Math.floor(world.snap.simMinute / 60);
+let lastMetricsQuarter = Math.floor(world.snap.simMinute / 15);
 
 let lastTickAt = Date.now();
 
@@ -235,6 +292,11 @@ async function tick() {
   for (const ev of events) await store.append("events", ev);
   for (const th of thoughts) await store.append(`thoughts/${th.pet}`, th);
 
+  const quarter = Math.floor(world.snap.simMinute / 15);
+  if (quarter !== lastMetricsQuarter) {
+    lastMetricsQuarter = quarter;
+    await store.append("metrics", sim.metrics());
+  }
   const hour = Math.floor(world.snap.simMinute / 60);
   if (hour !== lastLoggedHour) {
     lastLoggedHour = hour;

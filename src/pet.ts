@@ -40,6 +40,7 @@ export interface PetState {
   rngState: number;
   s1: S1State;
   mind: Mind;
+  stats: PetStats;
 }
 
 export type Suggestion = "none" | "seek_light" | "find_pet" | "inspect_object" | "rest";
@@ -65,6 +66,22 @@ export interface Mind {
 export function newMind(): Mind {
   return { beliefs: [], question: "", intention: null, suggestion: null, claims: [], episodes: [], sensed: { light: 0, temperature: 0, seen: [], heard: "", touch: "" }, lastThoughtSec: -1e9 };
 }
+
+/** Running counters per pet, shown on the dashboard. */
+export interface PetStats {
+  actionSec: Record<string, number>; // simulated seconds spent in each System 1 action
+  s1Thoughts: number;
+  s2Thoughts: number;
+  spoke: number;
+  heard: number;
+}
+
+export function newStats(): PetStats {
+  return { actionSec: {}, s1Thoughts: 0, s2Thoughts: 0, spoke: 0, heard: 0 };
+}
+
+/** Series colours validated for dark charts (colour follows the entity: a pet keeps its colour everywhere). */
+export const PET_PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181", "#008300", "#9085e9", "#e66767"] as const;
 
 export const PET_RADIUS = 18;
 export const HUMAN_RADIUS = 16;
@@ -100,6 +117,7 @@ export function spawnPet(def: PetDef, seed: number, index: number): PetState {
     lastPetSeenSec: -1e9,
     rngState: rng.state,
     mind: newMind(),
+    stats: newStats(),
     s1: { action: "wander", prevLight: 0, holdUntil: 0, holdAction: "", inspectCooldownUntil: 0, tumbleUntil: 0, lastThoughtSec: -1e9 },
   };
 }

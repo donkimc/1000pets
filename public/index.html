@@ -10,6 +10,14 @@
 <body class="bg-ink text-slate-100 font-sans antialiased p-4 pb-10 max-w-xl mx-auto">
 <h1 class="text-xl font-semibold mb-3">1000pets</h1>
 
+<nav id="tabs" class="sticky top-0 z-20 -mx-4 px-4 py-2 mb-3 bg-ink/95 backdrop-blur flex gap-2">
+  <button data-go="live" class="flex-1 py-2 rounded-lg text-sm">Live</button>
+  <button data-go="talk" class="flex-1 py-2 rounded-lg text-sm">Talk</button>
+  <button data-go="pets" class="flex-1 py-2 rounded-lg text-sm">Pets</button>
+  <button data-go="dash" class="flex-1 py-2 rounded-lg text-sm">Dashboard</button>
+</nav>
+
+<div data-tab="live">
 <section class="bg-panel rounded-xl p-4 mb-3">
   <div class="text-3xl font-semibold tabular-nums" id="time">--</div>
   <div class="text-sm text-mute" id="meta">connecting…</div>
@@ -29,6 +37,14 @@
 </section>
 
 <section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Environment</h2>
+  <div class="grid grid-cols-2 gap-x-4 gap-y-2" id="env"></div>
+</section>
+
+</div>
+
+<div data-tab="talk" class="hidden">
+<section class="bg-panel rounded-xl p-4 mb-3">
   <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Talk</h2>
   <div id="feed" class="space-y-2 max-h-80 overflow-auto mb-3 text-sm"></div>
   <div class="flex gap-2">
@@ -40,14 +56,43 @@
   <div id="chatnote" class="text-xs text-mute mt-1 min-h-4"></div>
 </section>
 
+</div>
+
+<div data-tab="pets" class="hidden">
 <section class="bg-panel rounded-xl p-4 mb-3">
   <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Pets</h2>
   <div id="pets" class="space-y-2"></div>
 </section>
 
+</div>
+
+<div data-tab="dash" class="hidden">
 <section class="bg-panel rounded-xl p-4 mb-3">
-  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Environment</h2>
-  <div class="grid grid-cols-2 gap-x-4 gap-y-2" id="env"></div>
+  <div class="flex items-center justify-between mb-2"><h2 class="text-xs uppercase tracking-wider text-mute">Key indicators</h2></div>
+  <div id="kpis" class="grid grid-cols-2 gap-2"></div>
+</section>
+
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">History range (simulated time)</h2>
+  <div id="range" class="flex flex-wrap gap-2"></div>
+</section>
+
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Battery</h2><div id="chart-battery"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <div class="flex items-center justify-between mb-2"><h2 class="text-xs uppercase tracking-wider text-mute">Needs</h2><select id="needs-pet" class="bg-slate-700 rounded-lg px-2 py-1 text-xs"></select></div>
+  <div id="chart-needs"></div>
+</section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Temperature</h2><div id="chart-temp"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Sunlight</h2><div id="chart-sun"></div></section>
+
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">What each pet spends its time on</h2><div id="activity"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Speech</h2><div id="speech"></div></section>
+
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Thoughts</h2>
+  <div id="tpet" class="flex flex-wrap gap-2 mb-2"></div>
+  <div id="tsys" class="flex flex-wrap gap-2 mb-2"></div>
+  <ul id="dthoughts" class="max-h-96 overflow-auto text-xs"></ul>
 </section>
 
 <section class="bg-panel rounded-xl p-4 mb-3">
@@ -60,7 +105,25 @@
   <ul id="events" class="max-h-64 overflow-auto text-sm"></ul>
 </section>
 
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Saved data</h2><div id="storage"></div></section>
+
+</div>
+
 <script>
+const TABS = ["live", "talk", "pets", "dash"];
+function showTab(name) {
+  if (!TABS.includes(name)) name = "live";
+  document.querySelectorAll("[data-tab]").forEach((el) => el.classList.toggle("hidden", el.dataset.tab !== name));
+  document.querySelectorAll("#tabs button").forEach((b) => {
+    const on = b.dataset.go === name;
+    b.classList.toggle("bg-accent", on); b.classList.toggle("text-emerald-950", on); b.classList.toggle("font-semibold", on); b.classList.toggle("bg-slate-700", !on);
+  });
+  window.dashboardVisible = name === "dash"; if (window.refreshDashboard) window.refreshDashboard();
+  try { localStorage.setItem("tab", name); } catch (e) {}
+  if (name === "talk") { const f = document.getElementById("feed"); f.scrollTop = f.scrollHeight; }
+}
+document.querySelectorAll("#tabs button").forEach((b) => (b.onclick = () => showTab(b.dataset.go)));
+let savedTab = "live"; try { savedTab = localStorage.getItem("tab") || "live"; } catch (e) {}
 const SPEEDS = [1, 10, 100, 1000];
 let state = null, layout = null;
 const $ = (id) => document.getElementById(id);
@@ -317,6 +380,8 @@ function connect() {
   ws.onclose = () => setTimeout(connect, 2000);
 }
 connect();
+showTab(savedTab);
 </script>
+<script src="/dashboard.js"></script>
 </body>
 </html>

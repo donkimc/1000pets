@@ -136,6 +136,7 @@ export class Conversation implements SpeechHook {
     };
     if (from === "human") this.petChain = 0;
     else {
+      from.stats.spoke++;
       this.lastSpokeMs.set(from.id, this.now());
       this.lastPetUtteranceMs = this.now();
       this.petChain++;
@@ -148,6 +149,7 @@ export class Conversation implements SpeechHook {
     // Everyone in earshot remembers it as an unverified claim; addressed pets (or all, for the human) reply.
     const repliers: PetState[] = [];
     for (const h of heard) {
+      h.stats.heard++;
       this.hear(h, speaker, text);
       const addressed = targetPet ? h === targetPet : to.kind === "all";
       if (addressed && (from === "human" || this.petChain <= GATE.maxPetChain)) repliers.push(h);
