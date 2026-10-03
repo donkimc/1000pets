@@ -20,6 +20,39 @@ export const OBJECTS: readonly RoomObject[] = [
   { id: "lamp", kind: "lamp", x: 300, y: 150, w: 30, h: 30 },
 ];
 
+export type Shape =
+  | { type: "circle"; cx: number; cy: number; r: number }
+  | { type: "rect"; x: number; y: number; w: number; h: number };
+
+/** Plant and lamp are drawn as circles centred on (x, y); everything else is a rectangle with (x, y) as its corner. */
+export function shapeOf(o: RoomObject): Shape {
+  return o.kind === "plant" || o.kind === "lamp"
+    ? { type: "circle", cx: o.x, cy: o.y, r: o.w / 2 }
+    : { type: "rect", x: o.x, y: o.y, w: o.w, h: o.h };
+}
+
+export function centerOf(o: RoomObject): { x: number; y: number } {
+  const s = shapeOf(o);
+  return s.type === "circle" ? { x: s.cx, y: s.cy } : { x: s.x + s.w / 2, y: s.y + s.h / 2 };
+}
+
+/** Objects a pet cannot walk through. The window, door and charger pad are flush with walls or the floor. */
+const SOLID_KINDS: readonly ObjectKind[] = ["plant", "table", "bed", "heater", "lamp"];
+export const SOLIDS: readonly Shape[] = OBJECTS.filter((o) => SOLID_KINDS.includes(o.kind)).map(shapeOf);
+
+export function circleHitsShape(x: number, y: number, r: number, s: Shape): boolean {
+  if (s.type === "circle") return Math.hypot(x - s.cx, y - s.cy) < r + s.r;
+  const nx = Math.max(s.x, Math.min(x, s.x + s.w));
+  const ny = Math.max(s.y, Math.min(y, s.y + s.h));
+  return Math.hypot(x - nx, y - ny) < r;
+}
+
+export function pointInShape(x: number, y: number, s: Shape): boolean {
+  return s.type === "circle"
+    ? Math.hypot(x - s.cx, y - s.cy) < s.r
+    : x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h;
+}
+
 export type Weather = "clear" | "cloudy" | "rain";
 const WEATHER_SUN: Record<Weather, number> = { clear: 1, cloudy: 0.45, rain: 0.2 };
 const WEATHER_TEMP: Record<Weather, number> = { clear: 0, cloudy: -1, rain: -3 };

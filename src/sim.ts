@@ -1,0 +1,170 @@
+// Simulation: advances the world and every pet in fixed 5-second chunks of simulated time,
+// so results do not depend on tick rate or clock speed.
+import { clamp, normAngle } from "./geometry.js";
+import { PET_RADIUS, spawnPet, type PetDef, type PetState } from "./pet.js";
+import { Rng } from "./rng.js";
+import { sense, type Observation, type Sound } from "./sensors.js";
+import { decide, updateDrives, type Decision } from "./system1.js";
+import { OBJECTS, ROOM, SOLIDS, centerOf, circleHitsShape, type World, type WorldEvent } from "./world.js";
+
+export const DT = 5; // simulated seconds per chunk
+export const WALK_SPEED = 30; // units per simulated second at full speed
+
+export interface SimSnapshot { simSec: number; pets: PetState[] }
+
+export interface Thought {
+  system: 1;
+  pet: string;
+  tSec: number;
+  day: number;
+  hour: number;
+  minute: number;
+  action: string;
+  reason: string;
+  drives: PetState["drives"];
+  energy: number;
+  light: number;
+  seen: { category: string; distance: number; bearing: number }[];
+}
+
+export interface StepResult { events: WorldEvent[]; thoughts: Thought[] }
+
+const SOUND_SOURCES: Record<string, string> = { footsteps: "door", knock: "door", car: "window", voices: "window" };
+
+export class Simulation {
+  simSec: number;
+  pets: PetState[];
+  private sounds: Sound[] = [];
+
+  constructor(readonly world: World, private seed: number, roster: PetDef[], snap?: SimSnapshot) {
+    this.simSec = snap?.simSec ?? world.snap.simMinute * 60;
+    this.pets = snap?.pets ? structuredClone(snap.pets) : roster.map((def, i) => spawnPet(def, seed, i));
+  }
+
+  snapshot(): SimSnapshot {
+    return { simSec: this.simSec, pets: this.pets };
+  }
+
+  addPet(def: PetDef): PetState {
+    if (this.pets.some((p) => p.id === def.id)) throw new Error(`pet ${def.id} already exists`);
+    const pet = spawnPet(def, this.seed, this.pets.length);
+    this.pets.push(pet);
+    return pet;
+  }
+
+  step(toSimMs: number, maxChunks = Infinity): StepResult {
+    const targetSec = toSimMs / 1000;
+    const result: StepResult = { events: [], thoughts: [] };
+    let n = 0;
+    while (this.simSec + DT <= targetSec && n++ < maxChunks) {
+      this.simSec += DT;
+      for (const ev of this.world.step(this.simSec * 1000)) {
+        result.events.push(ev);
+        this.recordSound(ev);
+      }
+      for (const p of this.pets) this.tickPet(p, result);
+    }
+    this.sounds = this.sounds.filter((s) => this.simSec - s.tSec <= 240);
+    return result;
+  }
+
+  private recordSound(ev: WorldEvent) {
+    if (ev.type !== "noise") return;
+    const src = OBJECTS.find((o) => o.id === (SOUND_SOURCES[ev.detail] ?? "window"))!;
+    const c = centerOf(src);
+    this.sounds.push({ tSec: this.simSec, x: c.x, y: c.y, volume: 0.7 });
+  }
+
+  private tickPet(p: PetState, out: StepResult) {
+    const rng = new Rng(p.rngState);
+    const obs = sense(p, this.pets, this.world, this.sounds, this.simSec, rng);
+    updateDrives(p, obs, DT, this.simSec);
+    const decision = decide(p, obs, rng, this.simSec);
+    this.act(p, decision, obs, out);
+    p.rngState = rng.state;
+  }
+
+  private act(p: PetState, dec: Decision, obs: Observation, out: StepResult) {
+    const prevMode = p.mode;
+    const prevAction = p.s1.action;
+
+    // Turn, then walk in small increments so nothing tunnels through an obstacle.
+    const turn = clamp(dec.turn, -1.5, 1.5);
+    p.heading = normAngle(p.heading + turn);
+    p.turnRate = turn / DT;
+    p.bumped = false;
+    p.touch = null;
+    let moved = 0;
+    const dist = WALK_SPEED * clamp(dec.forward, 0, 1) * DT;
+    const steps = Math.ceil(dist / 6);
+    for (let i = 0; i < steps; i++) {
+      const step = dist / steps;
+      const nx = p.x + Math.cos(p.heading) * step;
+      const ny = p.y + Math.sin(p.heading) * step;
+      const hit = this.collision(p, nx, ny);
+      if (hit) {
+        p.bumped = true;
+        p.touch = hit;
+        break;
+      }
+      p.x = nx;
+      p.y = ny;
+      moved += step;
+    }
+    p.speed = moved / DT;
+
+    // Charger pad contact is a touch the pet can feel.
+    const charger = centerOf(OBJECTS.find((o) => o.kind === "charger")!);
+    const onPad = Math.hypot(p.x - charger.x, p.y - charger.y) < 36;
+    if (onPad && !p.touch) p.touch = "pad";
+
+    // Mode.
+    if (p.energy <= 0) p.mode = "dormant";
+    else if (p.mode === "dormant" && p.energy < 10) p.mode = "dormant";
+    else if (dec.action === "sleep") p.mode = "sleeping";
+    else if (dec.action === "charge") p.mode = "charging";
+    else p.mode = moved > 0.1 ? "moving" : "idle";
+
+    // Energy: drain by activity, gain from the charger pad or sunlight patch.
+    const drainPerMin = p.mode === "moving" ? 0.12 : p.mode === "sleeping" ? 0.01 : p.mode === "dormant" ? -0.01 : 0.03;
+    const patch = this.world.sunPatch();
+    const env = this.world.env;
+    const inSun = env.curtainOpen && env.sunIntensity > 0 && Math.hypot(p.x - patch.x, p.y - patch.y) < patch.r;
+    p.chargeRate = Math.round(((onPad ? 1 : 0) + (inSun ? 0.2 * env.sunIntensity : 0)) * 1000) / 1000;
+    p.energy = clamp(p.energy + ((p.chargeRate - drainPerMin) * DT) / 60, 0, 100);
+
+    p.s1.action = dec.action;
+
+    const tod = obs.timeOfDay;
+    if (p.mode !== prevMode && (p.mode === "dormant" || prevMode === "dormant" || p.mode === "sleeping" || prevMode === "sleeping")) {
+      const type = p.mode === "dormant" ? "pet_dormant" : prevMode === "dormant" ? "pet_recovered" : p.mode === "sleeping" ? "pet_sleep" : "pet_wake";
+      out.events.push({ type, detail: p.name, simMinute: Math.floor(this.simSec / 60), day: Math.floor(this.simSec / 86400) + 1, hour: Math.floor(tod / 60), minute: tod % 60 });
+    }
+
+    // Record a thought when the action changes (not more than once every 15 simulated seconds).
+    if (dec.action !== prevAction && this.simSec - p.s1.lastThoughtSec >= 15) {
+      p.s1.lastThoughtSec = this.simSec;
+      out.thoughts.push({
+        system: 1,
+        pet: p.id,
+        tSec: this.simSec,
+        day: Math.floor(this.simSec / 86400) + 1,
+        hour: Math.floor(tod / 60),
+        minute: tod % 60,
+        action: dec.action,
+        reason: dec.reason,
+        drives: { ...p.drives },
+        energy: Math.round(p.energy),
+        light: obs.light,
+        seen: obs.vision.slice(0, 3).map((v) => ({ category: v.category, distance: v.distance, bearing: v.bearing })),
+      });
+    }
+  }
+
+  private collision(p: PetState, x: number, y: number): PetState["touch"] {
+    if (x < PET_RADIUS || y < PET_RADIUS || x > ROOM.width - PET_RADIUS || y > ROOM.height - PET_RADIUS) return "wall";
+    if (SOLIDS.some((s) => circleHitsShape(x, y, PET_RADIUS, s))) return "object";
+    if (this.pets.some((o) => o.id !== p.id && Math.hypot(x - o.x, y - o.y) < PET_RADIUS * 2)) return "pet";
+    return null;
+  }
+}

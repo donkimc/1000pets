@@ -5,7 +5,10 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import { SimClock, SPEEDS } from "./clock.js";
 import { Store } from "./store.js";
-import { OBJECTS, ROOM, World, type WorldEvent, type WorldSnapshot } from "./world.js";
+import { readFileSync } from "node:fs";
+import { Simulation, type SimSnapshot } from "./sim.js";
+import type { PetDef } from "./pet.js";
+import { OBJECTS, ROOM, World, type WorldSnapshot } from "./world.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
@@ -23,6 +26,11 @@ const clock = new SimClock(savedClock?.simMs ?? 0);
 if (savedClock && (SPEEDS as readonly number[]).includes(savedClock.speed)) clock.speed = savedClock.speed;
 const world = new World(SEED, savedWorld ?? undefined);
 
+// Pets: the default roster lives in config/pets.json; pets added later are kept in the data volume.
+const defaultRoster: PetDef[] = JSON.parse(readFileSync(path.join(__dirname, "..", "config", "pets.json"), "utf8"));
+const savedSim = await store.readJson<SimSnapshot>("pets.json");
+const sim = new Simulation(world, SEED, defaultRoster, savedSim ?? undefined);
+
 const app = express();
 app.use(express.json());
 app.use(express.static(path.join(__dirname, "..", "public")));
@@ -31,8 +39,16 @@ function status() {
   return { runId: RUN_ID, simTimeMs: clock.simTimeMs, ...clock.parts, speed: clock.speed, paused: clock.paused };
 }
 
+function petView() {
+  return sim.pets.map((p) => ({
+    id: p.id, name: p.name, color: p.color, x: Math.round(p.x), y: Math.round(p.y),
+    heading: Math.round(p.heading * 100) / 100, mode: p.mode, action: p.s1.action,
+    energy: Math.round(p.energy * 10) / 10, drives: p.drives,
+  }));
+}
+
 function worldView() {
-  return { env: world.env, sunPatch: world.sunPatch() };
+  return { env: world.env, sunPatch: world.sunPatch(), pets: petView() };
 }
 
 // Control endpoints are open unless ADMIN_TOKEN is set.
@@ -50,6 +66,36 @@ app.get("/api/world", (_req, res) => res.json({ room: ROOM, objects: OBJECTS, ..
 app.get("/api/events", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 50) || 50, 500);
   res.json(await store.readLog("events", limit));
+});
+app.get("/api/pets", (_req, res) => res.json(petView()));
+app.get("/api/thoughts/:id", async (req, res) => {
+  if (!/^[a-z0-9_-]{1,32}$/.test(req.params.id)) {
+    res.status(400).json({ error: "bad pet id" });
+    return;
+  }
+  const limit = Math.min(Number(req.query.limit ?? 30) || 30, 500);
+  res.json(await store.readLog(`thoughts/${req.params.id}`, limit));
+});
+app.post("/api/pets", requireAdmin, async (req, res) => {
+  const b = req.body ?? {};
+  const id = String(b.id ?? b.name ?? "").toLowerCase().replace(/[^a-z0-9_-]/g, "").slice(0, 32);
+  const num = (v: unknown, d: number) => (typeof v === "number" && v >= 0 && v <= 1 ? v : d);
+  if (!id || !b.name) {
+    res.status(400).json({ error: "name required" });
+    return;
+  }
+  try {
+    sim.addPet({
+      id, name: String(b.name).slice(0, 24), color: /^#[0-9a-fA-F]{6}$/.test(b.color) ? b.color : "#a3e635",
+      traits: { curiosity: num(b.traits?.curiosity, 0.5), social: num(b.traits?.social, 0.5), caution: num(b.traits?.caution, 0.5), patience: num(b.traits?.patience, 0.5) },
+      start: { x: 500, y: 300 },
+    });
+  } catch (e: any) {
+    res.status(409).json({ error: e.message });
+    return;
+  }
+  await store.append("events", { type: "pet_added", detail: String(b.name), ...clock.parts });
+  res.json(petView());
 });
 app.get("/api/world-log", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 48) || 48, 1000);
@@ -86,8 +132,9 @@ let lastLoggedHour = Math.floor(world.snap.simMinute / 60);
 async function tick() {
   clock.advance();
   // Cap work per tick so 1000x speed cannot starve the event loop; the world catches up on later ticks.
-  const events: WorldEvent[] = world.step(clock.simTimeMs, 2000);
+  const { events, thoughts } = sim.step(clock.simTimeMs, 400);
   for (const ev of events) await store.append("events", ev);
+  for (const th of thoughts) await store.append(`thoughts/${th.pet}`, th);
 
   const hour = Math.floor(world.snap.simMinute / 60);
   if (hour !== lastLoggedHour) {
@@ -96,7 +143,7 @@ async function tick() {
     await store.append("world", { simMinute: world.snap.simMinute, day: p.day, hour: p.hour, ...world.env });
   }
   broadcast({ type: "status", ...status(), ...worldView() });
-  if (events.length) broadcast({ type: "events", events });
+  if (events.length) broadcast({ type: "events", events: events.filter((e) => e.type !== "speed_changed") });
 }
 
 let ticking = false;
@@ -104,11 +151,12 @@ setInterval(() => {
   if (ticking) return;
   ticking = true;
   tick().catch((e) => console.error("tick failed", e)).finally(() => (ticking = false));
-}, 1000);
+}, 250);
 
 async function save() {
   await store.writeJson("clock.json", { simMs: clock.simTimeMs, speed: clock.speed });
   await store.writeJson("world.json", world.snap);
+  await store.writeJson("pets.json", sim.snapshot());
 }
 setInterval(() => void save().catch((e) => console.error("save failed", e)), 30_000);
 
