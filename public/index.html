@@ -39,6 +39,11 @@
 </section>
 
 <section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">AI usage</h2>
+  <div id="llm" class="text-sm space-y-2"></div>
+</section>
+
+<section class="bg-panel rounded-xl p-4 mb-3">
   <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Events</h2>
   <ul id="events" class="max-h-64 overflow-auto text-sm"></ul>
 </section>
@@ -77,7 +82,7 @@ function renderPets(pets) {
       card = document.createElement("div");
       card.id = "pet-" + p.id;
       card.className = "rounded-lg bg-ink/60 p-3";
-      card.innerHTML = `<button class="w-full text-left flex items-center gap-2" data-id="${p.id}"><span class="inline-block w-3 h-3 rounded-full" style="background:${p.color}"></span><span class="font-semibold">${p.name}</span><span class="text-sm text-mute flex-1" data-f="action"></span><span class="text-mute text-sm" data-f="chev">▾</span></button><div data-f="bars" class="mt-2 space-y-1"></div><ul data-f="thoughts" class="hidden mt-2 text-xs max-h-48 overflow-auto"></ul>`;
+      card.innerHTML = `<button class="w-full text-left flex items-center gap-2" data-id="${p.id}"><span class="inline-block w-3 h-3 rounded-full" style="background:${p.color}"></span><span class="font-semibold">${p.name}</span><span class="text-sm text-mute flex-1" data-f="action"></span><span class="text-mute text-sm" data-f="chev">▾</span></button><div data-f="bars" class="mt-2 space-y-1"></div><div data-f="mind" class="hidden mt-3 text-xs space-y-0.5"></div><ul data-f="thoughts" class="hidden mt-2 text-xs max-h-64 overflow-auto"></ul>`;
       card.querySelector("button").onclick = () => { openPets.has(p.id) ? openPets.delete(p.id) : openPets.add(p.id); loadThoughts(p.id); };
       root.appendChild(card);
     }
@@ -88,13 +93,29 @@ function renderPets(pets) {
 
 async function loadThoughts(id) {
   const card = document.getElementById("pet-" + id); if (!card) return;
-  const ul = card.querySelector('[data-f="thoughts"]'), open = openPets.has(id);
-  ul.classList.toggle("hidden", !open); card.querySelector('[data-f="chev"]').textContent = open ? "▴" : "▾";
+  const ul = card.querySelector('[data-f="thoughts"]'), mind = card.querySelector('[data-f="mind"]'), open = openPets.has(id);
+  ul.classList.toggle("hidden", !open); mind.classList.toggle("hidden", !open); card.querySelector('[data-f="chev"]').textContent = open ? "▴" : "▾";
   if (!open) return;
-  const list = await fetch(`/api/thoughts/${id}?limit=20`).then((r) => r.json());
-  ul.innerHTML = list.reverse().map((t) => `<li class="py-1 border-b border-line"><span class="text-mute tabular-nums">D${t.day} ${pad(t.hour)}:${pad(t.minute)}</span> <span class="text-accent">S1</span> ${ACTION_TEXT[t.action] || t.action} <span class="text-mute">— ${t.reason}</span></li>`).join("") || '<li class="text-mute">no thoughts yet</li>';
+  const [list, m] = await Promise.all([fetch(`/api/thoughts/${id}?limit=30`).then((r) => r.json()), fetch(`/api/mind/${id}`).then((r) => r.json())]);
+  const esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
+  mind.innerHTML = `<div><span class="text-mute">Question:</span> ${esc(m.question || "—")}</div><div><span class="text-mute">Intention:</span> ${esc(m.intention || "—")}</div>` +
+    `<div class="text-mute mt-1">Beliefs</div>` + (m.beliefs.length ? m.beliefs.map((b) => `<div>• ${esc(b.text)} <span class="text-mute">${Math.round(b.confidence * 100)}%</span></div>`).join("") : "<div class='text-mute'>none yet</div>");
+  ul.innerHTML = list.reverse().map((t) => {
+    const when = `<span class="text-mute tabular-nums">D${t.day} ${pad(t.hour)}:${pad(t.minute)}</span>`;
+    if (t.system === 2) return `<li class="py-1 border-b border-line">${when} <span class="text-violet-400">S2</span> ${esc(t.thought)} <span class="text-mute">— ${esc(t.question)} · ${t.provider}</span></li>`;
+    return `<li class="py-1 border-b border-line">${when} <span class="text-accent">S1</span> ${ACTION_TEXT[t.action] || t.action} <span class="text-mute">— ${esc(t.reason)}</span></li>`;
+  }).join("") || '<li class="text-mute">no thoughts yet</li>';
 }
 setInterval(() => openPets.forEach(loadThoughts), 4000);
+
+async function loadLlm() {
+  const d = await fetch("/api/llm").then((r) => r.json());
+  $("llm").innerHTML = !d.enabled ? '<div class="text-mute">No API keys set, System 2 is off.</div>' : d.providers.map((p) => {
+    const status = p.cooldownSec > 0 ? `<span class="text-amber-400">cooling down ${p.cooldownSec > 3600 ? Math.round(p.cooldownSec / 3600) + " h" : p.cooldownSec + " s"}</span>` : '<span class="text-accent">ready</span>';
+    return `<div><div class="flex justify-between"><span class="font-semibold">${p.name}</span>${status}</div><div class="text-xs text-mute">${p.model} · ${p.calls} calls · ${(p.tokensIn + p.tokensOut).toLocaleString()} tokens${p.spendUsd ? " · $" + p.spendUsd.toFixed(3) : ""}${p.failures ? " · " + p.failures + " failed" : ""}</div>${p.lastError ? `<div class="text-xs text-mute truncate">last error: ${p.lastError}</div>` : ""}</div>`;
+  }).join("");
+}
+loadLlm(); setInterval(loadLlm, 10000);
 
 function renderEnv(e) {
   const rows = [

@@ -1,7 +1,7 @@
 // Simulation: advances the world and every pet in fixed 5-second chunks of simulated time,
 // so results do not depend on tick rate or clock speed.
 import { clamp, normAngle } from "./geometry.js";
-import { HUMAN_RADIUS, PET_RADIUS, spawnPet, type HumanState, type PetDef, type PetState } from "./pet.js";
+import { HUMAN_RADIUS, PET_RADIUS, newMind, spawnPet, type HumanState, type PetDef, type PetState } from "./pet.js";
 import { Rng } from "./rng.js";
 import { sense, type Observation, type Sound } from "./sensors.js";
 import { decide, updateDrives, type Decision } from "./system1.js";
@@ -41,6 +41,7 @@ export class Simulation {
   constructor(readonly world: World, private seed: number, roster: PetDef[], snap?: SimSnapshot) {
     this.simSec = snap?.simSec ?? world.snap.simMinute * 60;
     this.pets = snap?.pets ? structuredClone(snap.pets) : roster.map((def, i) => spawnPet(def, seed, i));
+    for (const p of this.pets) p.mind ??= newMind(); // saves from before System 2 had no mind
     this.human = snap?.human ? structuredClone(snap.human) : { x: 820, y: 620, heading: -Math.PI / 2, moving: false };
   }
 
@@ -111,9 +112,36 @@ export class Simulation {
     const rng = new Rng(p.rngState);
     const obs = sense(p, this.pets, this.world, this.sounds, this.simSec, rng, this.human);
     updateDrives(p, obs, DT, this.simSec);
+    this.noteSensed(p, obs);
     const decision = decide(p, obs, rng, this.simSec);
     this.act(p, decision, obs, out);
     p.rngState = rng.state;
+  }
+
+  private noteSensed(p: PetState, obs: Observation) {
+    const side = (b: number) => (Math.abs(b) < 0.25 ? "ahead" : b > 0 ? "to the right" : "to the left");
+    const m = p.mind;
+    m.sensed = {
+      light: obs.light,
+      temperature: obs.temperature,
+      seen: obs.vision.slice(0, 4).map((v) => `${v.category === "moving" ? "a moving thing" : "a still object"} (${v.size > 100 ? "large" : "small"}) ${side(v.bearing)}, ${Math.round(v.distance)} away`),
+      heard: obs.hearing ? `a sound ${side(obs.hearing.bearing)}, volume ${obs.hearing.volume}` : "",
+      touch: obs.touch ?? "",
+    };
+    if (obs.hearing && obs.hearing.volume > 0.3) this.note(p, `heard a sound ${side(obs.hearing.bearing)}`);
+    if (obs.touch === "human") this.note(p, "touched the human");
+    if (obs.touch === "pet") this.note(p, "bumped into another pet");
+    if (obs.touch === "pad") this.note(p, "stood on the charging pad");
+  }
+
+  private note(p: PetState, text: string) {
+    const t = Math.floor(this.simSec / 60) % 1440;
+    const line = `D${Math.floor(this.simSec / 86400) + 1} ${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")} ${text}`;
+    const eps = p.mind.episodes;
+    const strip = (l: string) => l.replace(/^D\d+ \d\d:\d\d /, "");
+    if (eps.length && strip(eps[eps.length - 1]) === strip(line)) return; // skip immediate repeats
+    eps.push(line);
+    if (eps.length > 14) eps.shift();
   }
 
   private act(p: PetState, dec: Decision, obs: Observation, out: StepResult) {
@@ -172,6 +200,8 @@ export class Simulation {
       const type = p.mode === "dormant" ? "pet_dormant" : prevMode === "dormant" ? "pet_recovered" : p.mode === "sleeping" ? "pet_sleep" : "pet_wake";
       out.events.push({ type, detail: p.name, simMinute: Math.floor(this.simSec / 60), day: Math.floor(this.simSec / 86400) + 1, hour: Math.floor(tod / 60), minute: tod % 60 });
     }
+
+    if (dec.action !== prevAction && !["avoid", "pause"].includes(dec.action)) this.note(p, `${dec.reason} (light ${obs.light}, battery ${Math.round(p.energy)}%)`);
 
     // Record a thought when the action changes (not more than once every 15 simulated seconds).
     if (dec.action !== prevAction && this.simSec - p.s1.lastThoughtSec >= 15) {

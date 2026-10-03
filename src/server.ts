@@ -8,6 +8,8 @@ import { Store } from "./store.js";
 import { readFileSync } from "node:fs";
 import { Simulation, type SimSnapshot } from "./sim.js";
 import type { PetDef } from "./pet.js";
+import { gatewayFromEnv, type ProviderStats } from "./llm.js";
+import { System2 } from "./system2.js";
 import { OBJECTS, ROOM, World, type WorldSnapshot } from "./world.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -30,6 +32,12 @@ const world = new World(SEED, savedWorld ?? undefined);
 const defaultRoster: PetDef[] = JSON.parse(readFileSync(path.join(__dirname, "..", "config", "pets.json"), "utf8"));
 const savedSim = await store.readJson<SimSnapshot>("pets.json");
 const sim = new Simulation(world, SEED, defaultRoster, savedSim ?? undefined);
+
+// Slow thinking (System 2) runs through the LLM gateway: Groq first, DeepSeek as the fallback.
+const llm = gatewayFromEnv();
+llm.restore(await store.readJson<ProviderStats[]>("llm.json"));
+const system2 = new System2(sim, llm, store, { intervalSec: Number(process.env.S2_INTERVAL_SEC ?? 70), isPaused: () => clock.paused });
+console.log(`LLM providers: ${llm.snapshot().map((p) => `${p.name}(${p.model})`).join(", ") || "none"}`);
 
 const app = express();
 app.use(express.json());
@@ -102,6 +110,18 @@ app.post("/api/pets", requireAdmin, async (req, res) => {
   await store.append("events", { type: "pet_added", detail: String(b.name), ...clock.parts });
   res.json(petView());
 });
+app.get("/api/mind/:id", (req, res) => {
+  const p = sim.pets.find((x) => x.id === req.params.id);
+  if (!p) {
+    res.status(404).json({ error: "no such pet" });
+    return;
+  }
+  res.json({ question: p.mind.question, intention: p.mind.intention?.goal ?? null, beliefs: p.mind.beliefs, suggestion: p.mind.suggestion?.kind ?? null, episodes: p.mind.episodes });
+});
+app.get("/api/llm", (_req, res) => {
+  const now = Date.now();
+  res.json({ enabled: llm.enabled, providers: llm.snapshot().map((s) => ({ ...s, cooldownSec: Math.max(0, Math.round((s.cooldownUntil - now) / 1000)) })) });
+});
 app.get("/api/world-log", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 48) || 48, 1000);
   res.json(await store.readLog("world", limit));
@@ -162,6 +182,7 @@ async function tick() {
   sim.moveHuman(fresh ? input.dx : 0, fresh ? input.dy : 0, realDt);
   clock.advance();
   // Cap work per tick so 1000x speed cannot starve the event loop; the world catches up on later ticks.
+  system2.tick();
   const { events, thoughts } = sim.step(clock.simTimeMs, 400);
   for (const ev of events) await store.append("events", ev);
   for (const th of thoughts) await store.append(`thoughts/${th.pet}`, th);
@@ -187,6 +208,7 @@ async function save() {
   await store.writeJson("clock.json", { simMs: clock.simTimeMs, speed: clock.speed });
   await store.writeJson("world.json", world.snap);
   await store.writeJson("pets.json", sim.snapshot());
+  await store.writeJson("llm.json", llm.snapshot());
 }
 setInterval(() => void save().catch((e) => console.error("save failed", e)), 30_000);
 

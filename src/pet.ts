@@ -38,6 +38,27 @@ export interface PetState {
   lastPetSeenSec: number;
   rngState: number;
   s1: S1State;
+  mind: Mind;
+}
+
+export type Suggestion = "none" | "seek_light" | "find_pet" | "inspect_object" | "rest";
+export const SUGGESTIONS: readonly Suggestion[] = ["none", "seek_light", "find_pet", "inspect_object", "rest"];
+
+export interface Belief { text: string; confidence: number; updatedSec: number }
+
+/** Slow, deliberate state owned by System 2: beliefs, the current question, a long-running intention. */
+export interface Mind {
+  beliefs: Belief[];
+  question: string;
+  intention: { goal: string; sinceSec: number } | null;
+  suggestion: { kind: Suggestion; untilSec: number } | null;
+  episodes: string[]; // short notes of recent experience, newest last
+  sensed: { light: number; temperature: number; seen: string[]; heard: string; touch: string };
+  lastThoughtSec: number;
+}
+
+export function newMind(): Mind {
+  return { beliefs: [], question: "", intention: null, suggestion: null, episodes: [], sensed: { light: 0, temperature: 0, seen: [], heard: "", touch: "" }, lastThoughtSec: -1e9 };
 }
 
 export const PET_RADIUS = 18;
@@ -73,6 +94,7 @@ export function spawnPet(def: PetDef, seed: number, index: number): PetState {
     chargeRate: 0,
     lastPetSeenSec: -1e9,
     rngState: rng.state,
+    mind: newMind(),
     s1: { action: "wander", prevLight: 0, holdUntil: 0, holdAction: "", inspectCooldownUntil: 0, tumbleUntil: 0, lastThoughtSec: -1e9 },
   };
 }

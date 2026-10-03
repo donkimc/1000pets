@@ -31,12 +31,17 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
   const prevLight = s1.prevLight;
   s1.prevLight = obs.light;
 
+  // System 2 may suggest something; System 1 treats it as a nudge on the matching drive, never an order.
+  const sug = p.mind.suggestion && nowSec < p.mind.suggestion.untilSec ? p.mind.suggestion.kind : "none";
+  const boost = (kind: string) => (sug === kind ? 0.3 : 0);
+  const tag = (kind: string) => (sug === kind ? " (System 2 suggested it)" : "");
+
   // 0. Out of energy: nothing but a slow trickle of recovery.
   if (p.mode === "dormant") return stay("dormant", "battery empty, powered down");
 
   // 1. Sleep keeps going until rested (or morning and mostly rested).
   const night = isNight(obs.timeOfDay);
-  const wantSleep = d.rest > 0.85 || (night && d.rest > 0.35);
+  const wantSleep = d.rest + boost("rest") > 0.85 || (night && d.rest + boost("rest") > 0.35);
   if (p.mode === "sleeping") {
     if (d.rest < 0.05 || (!night && d.rest < 0.25)) return { action: "wander", reason: "rested, waking up", forward: 0.3, turn: 0 };
     return stay("sleep", "resting");
@@ -58,17 +63,17 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
   if (wantSleep && needEnergy < 0.7) return stay("sleep", night ? "night and tired" : "very tired");
 
   // 5. Low battery: stay where charge comes in, otherwise move toward brighter light.
-  if (needEnergy > 0.55) {
+  if (needEnergy + boost("seek_light") > 0.55) {
     if (obs.chargeRate > 0.05 && needEnergy > 0.2) return stay("charge", `charging at ${obs.chargeRate.toFixed(2)}%/min`);
     const worse = obs.light < prevLight - 1 || rng.chance(0.03);
     if (worse) return { action: "seek_light", reason: "light is dropping, trying another direction", forward: 0.6, turn: (rng.next() < 0.5 ? -1 : 1) * (1.2 + rng.next() * 1.4) };
-    return { action: "seek_light", reason: "battery low, following the light", forward: 1, turn: 0 };
+    return { action: "seek_light", reason: "battery low, following the light" + tag("seek_light"), forward: 1, turn: 0 };
   }
 
   // 6. Lonely: head for another pet, then stay near it for a while.
   const pet = obs.vision.find((v) => v.category === "moving");
-  if (d.social > 0.55 && pet) {
-    if (pet.distance > 75) return { action: "approach_pet", reason: `social need ${d.social.toFixed(2)}, another pet ahead`, forward: 0.7, turn: clamp(pet.bearing, -MAX_TURN, MAX_TURN) };
+  if (d.social + boost("find_pet") > 0.55 && pet) {
+    if (pet.distance > 75) return { action: "approach_pet", reason: `social need ${d.social.toFixed(2)}, another pet ahead` + tag("find_pet"), forward: 0.7, turn: clamp(pet.bearing, -MAX_TURN, MAX_TURN) };
     s1.holdUntil = nowSec + 60 + 240 * t.patience;
     s1.holdAction = "socialize";
     return stay("socialize", "staying close to another pet");
@@ -76,8 +81,8 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
 
   // 7. Curious: go and look at something unfamiliar-looking, then lose interest for a while.
   const thing = obs.vision.find((v) => v.category === "static" && v.size < 200);
-  if (d.curiosity > 0.5 && thing && nowSec >= s1.inspectCooldownUntil) {
-    if (thing.distance > 95) return { action: "approach_object", reason: `curiosity ${d.curiosity.toFixed(2)}, something to look at`, forward: 0.8 - 0.4 * t.caution, turn: clamp(thing.bearing, -MAX_TURN, MAX_TURN) };
+  if (d.curiosity + boost("inspect_object") > 0.5 && thing && nowSec >= s1.inspectCooldownUntil) {
+    if (thing.distance > 95) return { action: "approach_object", reason: `curiosity ${d.curiosity.toFixed(2)}, something to look at` + tag("inspect_object"), forward: 0.8 - 0.4 * t.caution, turn: clamp(thing.bearing, -MAX_TURN, MAX_TURN) };
     s1.holdUntil = nowSec + 15 + 45 * t.patience;
     s1.holdAction = "inspect";
     s1.inspectCooldownUntil = s1.holdUntil + 600;
