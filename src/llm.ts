@@ -98,6 +98,7 @@ export class LlmGateway {
     st.failures++;
     st.lastError = message.slice(0, 300);
     st.lastErrorAt = this.now();
+    console.warn(`llm ${p.name} failed: ${st.lastError}`);
     if (cooldownMs > 0) st.cooldownUntil = Math.max(st.cooldownUntil, this.now() + cooldownMs);
   }
 

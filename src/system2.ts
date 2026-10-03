@@ -147,6 +147,7 @@ export class System2 {
     }
     const nowSec = this.sim.simSec;
     applyThought(p, parsed, nowSec);
+    console.log(`system2 ${p.id} via ${result.provider} (${result.tokensIn}+${result.tokensOut} tok): ${parsed.thought.slice(0, 90)}`);
     await this.store.append(`thoughts/${p.id}`, {
       system: 2, pet: p.id, tSec: nowSec, day, hour: Math.floor(tod / 60), minute: tod % 60,
       question: parsed.question, thought: parsed.thought, beliefs: parsed.beliefs, intention: p.mind.intention?.goal ?? null,
