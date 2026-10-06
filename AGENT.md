@@ -14,7 +14,13 @@ The LLM is a language and interpretation layer. Core cognition must live in the 
 
 ## Current Phase
 
-We are starting with the **2D simulation**, not ESP32 hardware.
+We are working in the **2D simulation**, not ESP32 hardware. It is running: 3 pets, a human avatar, a room with
+sun, lamp, heater and a charger with a steady hum, accelerated simulated time, and a tabbed web dashboard.
+Built so far: System 1/System 2 brains, scene memory, sleep consolidation, dreams, prediction and surprise,
+belief verification, optional self-tuned habits (off by default), an AI Teacher, simulation saves, and per-pet
+brain export/import. `HANDOFF.md` is the source of truth for current behaviour and what is not done.
+
+The original starting goals for the experiment were:
 
 The first serious experiment should support:
 

@@ -66,6 +66,47 @@ export interface EnvState {
   doorOpen: boolean;
   lampOn: boolean;
   heaterOn: boolean;
+  beaconOn: boolean; // the charger's steady hum
+}
+
+/** Values a person (or the teacher) can pin. A pinned field holds its value; the automatic schedule leaves it alone until it is released. */
+export const OVERRIDE_FIELDS = ["weather", "sunIntensity", "outdoorTemp", "indoorTemp", "curtainOpen", "doorOpen", "lampOn", "heaterOn", "beaconOn"] as const;
+export type OverrideField = (typeof OVERRIDE_FIELDS)[number];
+export type Overrides = {
+  weather?: Weather;
+  sunIntensity?: number;
+  outdoorTemp?: number;
+  indoorTemp?: number;
+  curtainOpen?: boolean;
+  doorOpen?: boolean;
+  lampOn?: boolean;
+  heaterOn?: boolean;
+  beaconOn?: boolean;
+};
+
+const WEATHERS: readonly Weather[] = ["clear", "cloudy", "rain"];
+
+/** Validate a value for a field. Throws a readable error; numbers are clamped to a sane range and rounded. */
+export function parseOverride(field: string, value: unknown): Overrides[OverrideField] {
+  if (!(OVERRIDE_FIELDS as readonly string[]).includes(field)) throw new Error(`unknown field "${field}"`);
+  switch (field as OverrideField) {
+    case "weather":
+      if (!WEATHERS.includes(value as Weather)) throw new Error(`weather must be one of ${WEATHERS.join(", ")}`);
+      return value as Weather;
+    case "sunIntensity":
+    case "outdoorTemp":
+    case "indoorTemp": {
+      const n = typeof value === "string" && value.trim() !== "" ? Number(value) : value;
+      if (typeof n !== "number" || !Number.isFinite(n)) throw new Error(`${field} must be a number`);
+      const [lo, hi] = field === "sunIntensity" ? [0, 1] : field === "outdoorTemp" ? [-30, 50] : [0, 40];
+      return Math.min(hi, Math.max(lo, Math.round(n * 100) / 100));
+    }
+    default:
+      if (typeof value === "boolean") return value;
+      if (value === "on" || value === "open" || value === "true") return true;
+      if (value === "off" || value === "closed" || value === "false") return false;
+      throw new Error(`${field} must be true or false`);
+  }
 }
 
 export interface WorldSnapshot {
@@ -74,6 +115,7 @@ export interface WorldSnapshot {
   env: EnvState;
   curtainStuckDay: number; // day number when the curtain failed to open, else -1
   doorOpenUntil: number; // simMinute at which the door closes, else -1
+  overrides?: Overrides; // pinned values (absent in saves from before environment control)
 }
 
 export interface WorldEvent {
@@ -113,10 +155,46 @@ export class World {
             doorOpen: false,
             lampOn: false,
             heaterOn: false,
+            beaconOn: true,
           },
           curtainStuckDay: -1,
           doorOpenUntil: -1,
+          overrides: {},
         };
+    this.snap.overrides ??= {};
+    this.snap.env.beaconOn ??= true; // saves from before the beacon
+  }
+
+  get overrides(): Overrides {
+    return this.snap.overrides!;
+  }
+
+  /** Pin a field to a value, or release it back to the automatic schedule with `null`. Takes effect at once. */
+  setOverride(field: string, value: unknown | null): { field: OverrideField; from: unknown; to: unknown; mode: "pin" | "auto" } {
+    if (!(OVERRIDE_FIELDS as readonly string[]).includes(field)) throw new Error(`unknown field "${field}"`);
+    const f = field as OverrideField;
+    const e = this.snap.env as unknown as Record<string, unknown>;
+    const from = e[f];
+    if (value === null || value === "auto") {
+      delete this.snap.overrides![f];
+      if (f === "beaconOn") this.snap.env.beaconOn = true; // its normal state
+      return { field: f, from, to: f === "beaconOn" ? true : from, mode: "auto" };
+    }
+    const v = parseOverride(f, value);
+    (this.snap.overrides as Record<string, unknown>)[f] = v;
+    e[f] = v;
+    if (f === "weather") this.updateWeatherDerived(this.snap.simMinute % DAY);
+    if (f === "doorOpen") this.snap.doorOpenUntil = -1;
+    return { field: f, from, to: v, mode: "pin" };
+  }
+
+  /** Sun and outdoor temperature follow the weather and the time of day, unless pinned. */
+  private updateWeatherDerived(tod: number) {
+    const e = this.snap.env;
+    const pin = this.snap.overrides!;
+    const daylight = tod >= 360 && tod <= 1080 ? Math.sin((Math.PI * (tod - 360)) / 720) : 0;
+    e.sunIntensity = pin.sunIntensity ?? round2(daylight * WEATHER_SUN[e.weather]);
+    e.outdoorTemp = pin.outdoorTemp ?? round1(14 - 6 * Math.cos((2 * Math.PI * (tod - 240)) / DAY) + WEATHER_TEMP[e.weather]);
   }
 
   get env(): EnvState {
@@ -148,9 +226,10 @@ export class World {
     const day = Math.floor(m / DAY);
     const tod = m % DAY;
     const weekend = isWeekend(day);
+    const pin = s.overrides!;
 
     // Weather: re-evaluated every 3 hours.
-    if (tod % 180 === 0 && this.rng.chance(0.4)) {
+    if (pin.weather === undefined && tod % 180 === 0 && this.rng.chance(0.4)) {
       const next = this.rng.pick<Weather>(["clear", "cloudy", "rain"]);
       if (next !== e.weather) {
         e.weather = next;
@@ -159,16 +238,13 @@ export class World {
     }
 
     // Sun: daylight 06:00-18:00 following a half sine, scaled by weather.
-    const daylight = tod >= 360 && tod <= 1080 ? Math.sin((Math.PI * (tod - 360)) / 720) : 0;
-    e.sunIntensity = round2(daylight * WEATHER_SUN[e.weather]);
-
     // Outdoor temperature: coldest 04:00, warmest 16:00.
-    e.outdoorTemp = round1(14 - 6 * Math.cos((2 * Math.PI * (tod - 240)) / DAY) + WEATHER_TEMP[e.weather]);
+    this.updateWeatherDerived(tod);
 
     // Curtain schedule (later at weekends); occasionally it fails to open - a deliberate anomaly.
     const openAt = weekend ? 540 : 420;
     const closeAt = weekend ? 1200 : 1140;
-    if (tod === openAt) {
+    if (pin.curtainOpen === undefined && tod === openAt) {
       if (this.rng.chance(0.04)) {
         s.curtainStuckDay = day;
         this.emit(events, "curtain_stuck", "curtain stayed closed this morning");
@@ -177,13 +253,15 @@ export class World {
         this.emit(events, "curtain_opened", weekend ? "weekend" : "weekday");
       }
     }
-    if (tod === closeAt && e.curtainOpen) {
+    if (pin.curtainOpen === undefined && tod === closeAt && e.curtainOpen) {
       e.curtainOpen = false;
       this.emit(events, "curtain_closed", "");
     }
 
     // Door: someone passes through now and then during waking hours.
-    if (e.doorOpen && m >= s.doorOpenUntil) {
+    if (pin.doorOpen !== undefined) {
+      /* pinned: stays as set */
+    } else if (e.doorOpen && m >= s.doorOpenUntil) {
       e.doorOpen = false;
       this.emit(events, "door_closed", "");
     } else if (!e.doorOpen && tod >= 420 && tod <= 1320 && this.rng.chance(1 / 240)) {
@@ -194,14 +272,16 @@ export class World {
 
     // Lamp: on in the evening.
     const lampShouldBeOn = tod >= 1110 && tod < 1380;
-    if (lampShouldBeOn !== e.lampOn) {
+    if (pin.lampOn === undefined && lampShouldBeOn !== e.lampOn) {
       e.lampOn = lampShouldBeOn;
       this.emit(events, lampShouldBeOn ? "lamp_on" : "lamp_off", "");
     }
 
     // Heater with hysteresis, only during waking hours.
     const awake = tod >= 360 && tod < 1380;
-    if (!e.heaterOn && awake && e.indoorTemp < 19) {
+    if (pin.heaterOn !== undefined) {
+      /* pinned: stays as set */
+    } else if (!e.heaterOn && awake && e.indoorTemp < 19) {
       e.heaterOn = true;
       this.emit(events, "heater_on", `indoor ${e.indoorTemp}°C`);
     } else if (e.heaterOn && (!awake || e.indoorTemp > 21)) {
@@ -212,7 +292,10 @@ export class World {
     // Indoor temperature drifts toward a target set by outdoors, sun through the window and heater.
     const target =
       e.outdoorTemp + 4 + (e.curtainOpen ? e.sunIntensity * 3 : 0) + (e.heaterOn ? 5 : 0) + (e.doorOpen ? -2 : 0);
-    e.indoorTemp = round2(e.indoorTemp + (target - e.indoorTemp) * 0.01);
+    e.indoorTemp = pin.indoorTemp ?? round2(e.indoorTemp + (target - e.indoorTemp) * 0.01);
+
+    // The charger's hum is simply on, unless someone has switched it off.
+    if (pin.beaconOn === undefined) e.beaconOn = true;
 
     // Occasional ambient noise from outside (for the hearing sensor later).
     if (this.rng.chance(1 / 600)) this.emit(events, "noise", this.rng.pick(["footsteps", "car", "voices", "knock"]));

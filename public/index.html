@@ -10,11 +10,14 @@
 <body class="bg-ink text-slate-100 font-sans antialiased p-4 pb-10 max-w-xl mx-auto">
 <h1 class="text-xl font-semibold mb-3">1000pets</h1>
 
-<nav id="tabs" class="sticky top-0 z-20 -mx-4 px-4 py-2 mb-3 bg-ink/95 backdrop-blur flex gap-2">
-  <button data-go="live" class="flex-1 py-2 rounded-lg text-sm">Live</button>
-  <button data-go="talk" class="flex-1 py-2 rounded-lg text-sm">Talk</button>
-  <button data-go="pets" class="flex-1 py-2 rounded-lg text-sm">Pets</button>
-  <button data-go="dash" class="flex-1 py-2 rounded-lg text-sm">Dashboard</button>
+<nav id="tabs" class="sticky top-0 z-20 -mx-4 px-4 py-2 mb-3 bg-ink/95 backdrop-blur flex gap-2 overflow-x-auto">
+  <button data-go="live" class="shrink-0 px-3 py-2 rounded-lg text-sm">Live</button>
+  <button data-go="talk" class="shrink-0 px-3 py-2 rounded-lg text-sm">Talk</button>
+  <button data-go="pets" class="shrink-0 px-3 py-2 rounded-lg text-sm">Pets</button>
+  <button data-go="env" class="shrink-0 px-3 py-2 rounded-lg text-sm">Env</button>
+  <button data-go="teacher" class="shrink-0 px-3 py-2 rounded-lg text-sm">Teacher</button>
+  <button data-go="saves" class="shrink-0 px-3 py-2 rounded-lg text-sm">Saves</button>
+  <button data-go="dash" class="shrink-0 px-3 py-2 rounded-lg text-sm">Dashboard</button>
 </nav>
 
 <div data-tab="live">
@@ -61,9 +64,62 @@
 <div data-tab="pets" class="hidden">
 <section class="bg-panel rounded-xl p-4 mb-3">
   <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Pets</h2>
+  <label class="flex items-start gap-2 mb-3 text-sm"><input id="rule-learning" type="checkbox" class="mt-1"><span>Let pets tune their own habits <span class="block text-xs text-mute">Off by default. When on, a pet that has had an unmet need for a day (or thinks of one) may try a small change to one soft habit, such as how soon it looks for company. Each change is tried for 24 hours, alternating with the old value, and kept only if it clearly helps. Reflexes, such as avoiding obstacles and powering down, are never touched.</span></span></label>
+  <div id="rule-note" class="text-xs text-mute mb-2 min-h-4"></div>
   <div id="pets" class="space-y-2"></div>
 </section>
 
+</div>
+
+<div data-tab="env" class="hidden">
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <div class="flex items-center justify-between mb-2"><h2 class="text-xs uppercase tracking-wider text-mute">Set the environment</h2><button id="env-release" class="text-xs px-3 py-1.5 rounded-lg bg-slate-700 active:bg-slate-600">Release all to auto</button></div>
+  <p class="text-xs text-mute mb-3">Set a value and it stays pinned (📌) until you press Auto, which hands it back to the normal daily schedule. The Teacher can change these too.</p>
+  <div id="env-controls" class="space-y-2"></div>
+  <div id="env-note" class="text-xs text-mute mt-2 min-h-4"></div>
+</section>
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <div class="flex items-center justify-between mb-2"><h2 class="text-xs uppercase tracking-wider text-mute">Change history</h2><div id="env-filter" class="flex gap-1"></div></div>
+  <ul id="env-history" class="max-h-96 overflow-auto text-sm"></ul>
+</section>
+</div>
+
+<div data-tab="teacher" class="hidden">
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <div class="flex items-center justify-between mb-2"><h2 class="text-xs uppercase tracking-wider text-mute">Teacher</h2><span id="t-status" class="text-xs"></span></div>
+  <div id="t-meta" class="text-xs text-mute space-y-0.5"></div>
+  <div class="flex flex-wrap gap-2 mt-3">
+    <button id="t-toggle" class="px-3 py-2 rounded-lg bg-slate-700 text-sm active:bg-slate-600">Pause teacher</button>
+    <button id="t-review" class="px-3 py-2 rounded-lg bg-slate-700 text-sm active:bg-slate-600">Review now</button>
+    <button id="t-regen" class="px-3 py-2 rounded-lg bg-slate-700 text-sm active:bg-slate-600">New plan</button>
+  </div>
+  <div id="t-error" class="text-xs text-amber-400 mt-2"></div>
+</section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Long-term plan</h2><div id="t-long" class="space-y-2 text-sm"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Short-term agenda</h2><ul id="t-agenda" class="text-sm"></ul></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Questions from the pets</h2><ul id="t-questions" class="text-sm"></ul></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Review journal</h2><div id="t-journal" class="space-y-2 text-sm"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">What the teacher did</h2><ul id="t-log" class="max-h-80 overflow-auto text-xs"></ul></section>
+</div>
+
+<div data-tab="saves" class="hidden">
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Save the simulation</h2>
+  <div class="flex gap-2"><input id="save-name" maxlength="60" autocomplete="off" placeholder="Name (e.g. Day 3, before the heater test)" class="flex-1 min-w-0 bg-slate-700 rounded-lg px-3 py-2 text-base outline-none focus:ring-1 focus:ring-accent"><button id="save-go" class="px-4 rounded-lg bg-accent text-emerald-950 font-semibold">Save</button></div>
+  <div id="save-note" class="text-xs text-mute mt-2 min-h-4"></div>
+</section>
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Saved simulations</h2>
+  <p class="text-xs text-mute mb-2">Loading replaces the live world, pets, teacher and history, and leaves the simulation paused. A backup of what you had is kept automatically (the latest 3).</p>
+  <ul id="save-list" class="space-y-2"></ul>
+</section>
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Pet brain library</h2>
+  <p class="text-xs text-mute mb-2">Save a pet's brain from the Pets tab. A brain carries personality, beliefs, what it was told, its goal and recent memories, and can be put into any pet here or in another simulation.</p>
+  <ul id="brain-list" class="space-y-2"></ul>
+  <label class="mt-3 block text-sm"><span class="text-mute text-xs">Upload a brain file</span><input id="brain-upload" type="file" accept="application/json,.json" class="block mt-1 text-xs"></label>
+  <div id="brain-note" class="text-xs text-mute mt-2 min-h-4"></div>
+</section>
 </div>
 
 <div data-tab="dash" class="hidden">
@@ -82,6 +138,7 @@
   <div class="flex items-center justify-between mb-2"><h2 class="text-xs uppercase tracking-wider text-mute">Needs</h2><select id="needs-pet" class="bg-slate-700 rounded-lg px-2 py-1 text-xs"></select></div>
   <div id="chart-needs"></div>
 </section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Surprise (the biggest in each 15 minutes: how far reality was from what each pet expected; the hum being switched off or back on shows as spikes)</h2><div id="chart-surprise"></div></section>
 <section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Temperature</h2><div id="chart-temp"></div></section>
 <section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Sunlight</h2><div id="chart-sun"></div></section>
 
@@ -110,7 +167,7 @@
 </div>
 
 <script>
-const TABS = ["live", "talk", "pets", "dash"];
+const TABS = ["live", "talk", "pets", "env", "teacher", "saves", "dash"];
 function showTab(name) {
   if (!TABS.includes(name)) name = "live";
   document.querySelectorAll("[data-tab]").forEach((el) => el.classList.toggle("hidden", el.dataset.tab !== name));
@@ -119,6 +176,7 @@ function showTab(name) {
     b.classList.toggle("bg-accent", on); b.classList.toggle("text-emerald-950", on); b.classList.toggle("font-semibold", on); b.classList.toggle("bg-slate-700", !on);
   });
   window.dashboardVisible = name === "dash"; if (window.refreshDashboard) window.refreshDashboard();
+  window.activeTab = name; if (window.onTab) window.onTab(name);
   try { localStorage.setItem("tab", name); } catch (e) {}
   if (name === "talk") { const f = document.getElementById("feed"); f.scrollTop = f.scrollHeight; }
 }
@@ -146,7 +204,7 @@ function render() {
 
 const openPets = new Set();
 const ACTION_TEXT = { dormant: "powered down", avoid: "avoiding an obstacle", sleep: "sleeping", charge: "charging", seek_light: "seeking light",
-  approach_pet: "going to a pet", socialize: "with a pet", approach_object: "going to look at something", inspect: "inspecting", wander: "wandering", pause: "pausing" };
+  approach_pet: "going to a pet", socialize: "with a pet", approach_object: "going to look at something", follow_tone: "following a tone", inspect: "inspecting", wander: "wandering", pause: "pausing" };
 const bar = (label, v, color) => `<div class="flex items-center gap-2 text-xs"><span class="w-16 text-mute">${label}</span><div class="flex-1 h-1.5 bg-slate-700 rounded"><div class="h-1.5 rounded" style="width:${Math.round(v * 100)}%;background:${color}"></div></div><span class="w-8 text-right tabular-nums">${Math.round(v * 100)}</span></div>`;
 
 function renderPets(pets) {
@@ -157,7 +215,7 @@ function renderPets(pets) {
       card = document.createElement("div");
       card.id = "pet-" + p.id;
       card.className = "rounded-lg bg-ink/60 p-3";
-      card.innerHTML = `<button class="w-full text-left flex items-center gap-2" data-id="${p.id}"><span class="inline-block w-3 h-3 rounded-full" style="background:${p.color}"></span><span class="font-semibold">${p.name}</span><span class="text-sm text-mute flex-1" data-f="action"></span><span class="text-mute text-sm" data-f="chev">▾</span></button><div data-f="bars" class="mt-2 space-y-1"></div><div data-f="mind" class="hidden mt-3 text-xs space-y-0.5"></div><ul data-f="thoughts" class="hidden mt-2 text-xs max-h-64 overflow-auto"></ul>`;
+      card.innerHTML = `<button class="w-full text-left flex items-center gap-2" data-id="${p.id}"><span class="inline-block w-3 h-3 rounded-full" style="background:${p.color}"></span><span class="font-semibold">${p.name}</span><span class="text-sm text-mute flex-1" data-f="action"></span><span class="text-mute text-sm" data-f="chev">▾</span></button><div data-f="bars" class="mt-2 space-y-1"></div><div data-f="mind" class="hidden mt-3 text-xs space-y-0.5"></div><ul data-f="thoughts" class="hidden mt-2 text-xs max-h-64 overflow-auto"></ul><div class="mt-3 flex gap-2"><button data-brain-save="${p.id}" class="flex-1 py-2 rounded-lg bg-slate-700 text-xs active:bg-slate-600">Save brain</button><a href="/api/pets/${p.id}/brain" download class="flex-1 py-2 rounded-lg bg-slate-700 text-xs text-center active:bg-slate-600">Download brain</a></div><div data-brain-note="${p.id}" class="text-xs text-mute mt-1 min-h-4"></div>`;
       card.querySelector("button").onclick = () => { openPets.has(p.id) ? openPets.delete(p.id) : openPets.add(p.id); loadThoughts(p.id); };
       root.appendChild(card);
     }
@@ -165,6 +223,8 @@ function renderPets(pets) {
     card.querySelector('[data-f="bars"]').innerHTML = bar("battery", p.energy / 100, "#6cc4a1") + bar("curiosity", p.drives.curiosity, "#fbbf24") + bar("social", p.drives.social, "#f472b6") + bar("rest", p.drives.rest, "#60a5fa");
   }
 }
+
+const habitText = (e) => e.type === "trial_started" ? `trying ${e.knob} ${e.from} → ${e.to}: ${e.reason}` : `${e.type} ${e.knob} ${e.from} → ${e.to}: ${e.why}`;
 
 async function loadThoughts(id) {
   const card = document.getElementById("pet-" + id); if (!card) return;
@@ -174,10 +234,36 @@ async function loadThoughts(id) {
   const [list, m] = await Promise.all([fetch(`/api/thoughts/${id}?limit=30`).then((r) => r.json()), fetch(`/api/mind/${id}`).then((r) => r.json())]);
   const esc = (t) => String(t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" }[c]));
   mind.innerHTML = `<div><span class="text-mute">Question:</span> ${esc(m.question || "—")}</div><div><span class="text-mute">Intention:</span> ${esc(m.intention || "—")}</div>` +
-    `<div class="text-mute mt-1">Beliefs</div>` + (m.beliefs.length ? m.beliefs.map((b) => `<div>• ${esc(b.text)} <span class="text-mute">${Math.round(b.confidence * 100)}%</span></div>`).join("") : "<div class='text-mute'>none yet</div>");
+    `<div class="text-mute mt-1">Beliefs</div>` + (m.beliefs.length ? m.beliefs.map((b) => `<div>• ${esc(b.text)} <span class="text-mute">${Math.round(b.confidence * 100)}%</span>${b.verdict === "contradicted" ? ` <span class="text-amber-300">its own experience disagrees: ${esc(b.why || "")}</span>` : b.verdict === "supported" ? ' <span class="text-accent">borne out</span>' : ""}</div>`).join("") : "<div class='text-mute'>none yet</div>") +
+    (m.rules ? `<div class="text-mute mt-2">Its own habits <span class="text-xs">(small thresholds it may tune; each change is tried for a day and kept only if it truly helps)</span></div>` +
+      m.rules.habits.filter((h) => h.value !== h.default).map((h) => `<div>• ${esc(h.label)}: <b>${h.value}</b> <span class="text-mute">(usual ${h.default})</span></div>`).join("") +
+      (m.rules.habits.every((h) => h.value === h.default) ? "<div class='text-mute'>all as usual</div>" : "") +
+      (m.rules.trial ? `<div class="text-teal-300">trying: ${esc(m.rules.habits.find((h) => h.name === m.rules.trial.knob).label)} ${m.rules.trial.from} → ${m.rules.trial.to} (${m.rules.trial.hoursLeft} h left, using the ${m.rules.trial.using} value now) <span class="text-mute">— ${esc(m.rules.trial.reason)}</span></div>` : "") +
+      m.rules.history.slice(0, 3).map((h) => `<div class="text-xs"><span class="${h.outcome === "adopted" ? "text-accent" : "text-amber-300"}">${esc(h.outcome)}</span> ${esc(h.knob)} ${h.from} → ${h.to}: ${esc(h.why)}</div>`).join("") +
+      `<button data-reset-rules="${id}" class="mt-1 text-xs px-2 py-1 rounded bg-slate-700 active:bg-slate-600">Reset its habits</button>` : "") +
+    `<div class="text-mute mt-2">What it was told <span class="text-xs">(checked against what it has experienced)</span></div>` +
+    ((m.claims || []).length ? m.claims.slice(-5).map((c) => `<div>• ${esc(c.text)} <span class="${c.status === "contradicted" ? "text-amber-300" : c.status === "supported" ? "text-accent" : "text-mute"}">${esc(c.status)}${c.why && c.status !== "unverified" ? ": " + esc(c.why) : ""}</span></div>`).join("") : "<div class='text-mute'>nothing yet</div>") +
+    ((m.refuted || []).length ? `<div class="text-mute mt-2">Found to be wrong <span class="text-xs">(it will not take these up again for a day)</span></div>` + m.refuted.slice(0, 3).map((r) => `<div>• ${esc(r.text)} <span class="text-mute">— ${esc(r.why)}</span></div>`).join("") : "") +
+    (m.predict ? `<div class="text-mute mt-2">What surprised it <span class="text-xs">(expectations it learned from experience, and where reality broke them)</span></div><div class="text-xs">recent surprise level ${(m.predict.level * 100).toFixed(1)}%${Object.entries(m.predict.byChannel).map(([k, v]) => ` · ${esc(k)} ${(v * 100).toFixed(1)}%`).join("")}</div>` + (m.predict.recent.length ? m.predict.recent.slice(0, 4).map((s) => `<div>• ${esc(s.why)} <span class="text-mute">(${Math.round(s.score * 100)}%)</span></div>`).join("") : "<div class='text-mute'>nothing unexpected yet</div>") : "") +
+    `<div class="text-mute mt-2">Dreams <span class="text-xs">(remembered as dreams: none of it happened, and it is kept apart from what it believes)</span></div>` +
+    ((m.dreams || []).length ? m.dreams.slice(0, 3).map((d) => `<div class="mt-1 rounded bg-violet-950/40 p-1.5"><div class="italic text-violet-200">“${esc(d.narrative)}”</div><div class="text-mute text-xs">twists: ${esc(d.twists.join("; "))}</div><div class="text-xs"><span class="text-mute">worry to check:</span> ${esc(d.worry)}</div></div>`).join("") : "<div class='text-mute'>no dreams yet</div>") +
+    `<div class="text-mute mt-2">What it has come to think <span class="text-xs">(written while asleep, provisional; confidence only grows with later experience)</span></div>` +
+    ((m.gists || []).length ? m.gists.map((g) => `<div>• ${esc(g.text)} <span class="text-mute">${Math.round(g.confidence * 100)}% · from ${g.sources} moments · used ${g.uses}×</span>${g.verdict === "contradicted" ? ` <span class="text-amber-300">its experience disagrees: ${esc(g.why || "")}</span>` : g.verdict === "conflict" ? ` <span class="text-amber-300">${esc(g.why || "")}</span>` : g.verdict === "supported" ? ' <span class="text-accent">borne out</span>' : ""}</div>`).join("") : "<div class='text-mute'>nothing yet</div>") +
+    (m.lastSleep ? `<div class="text-mute text-xs mt-1">Last night: ${m.lastSleep.scenesBefore} → ${m.lastSleep.scenesAfter} moments (merged ${m.lastSleep.merged}, forgot ${m.lastSleep.forgotten}), ${m.lastSleep.claimsSupported} claims borne out</div>` : "") +
+    `<div class="text-mute mt-2">Steady tones <span class="text-xs">(what it has worked out, from counts)</span></div>` +
+    ((m.cues || []).length ? m.cues.map((c) => `<div>• ${c.pitch} Hz · heard ${c.minutes} min · charged after reaching it ${c.support}× · failed ${c.contra}× · <span class="${c.trusted ? "text-accent" : "text-mute"}">${c.trusted ? "trusts it" : c.tentative ? "suspects it" : "unsure"}</span></div>`).join("") : "<div class='text-mute'>none heard yet</div>") +
+    `<div class="text-mute mt-2">Memorable moments <span class="text-xs">(view: left to right across its sight, then front/right/back/left around it; . empty, o small, # large, @ moving)</span></div>` +
+    ((m.scenes || []).length ? m.scenes.map((s) => `<div class="mt-1 rounded bg-ink/60 p-1.5"><div><span class="text-mute tabular-nums">${esc(s.when)}</span> ${esc(s.why)} <span class="text-mute">· importance ${Math.round(s.importance * 100)}% · used ${s.uses}×</span></div><div class="font-mono text-teal-300 tracking-wider">${esc(s.view)}</div></div>`).join("") : "<div class='text-mute'>none yet</div>");
   ul.innerHTML = list.reverse().map((t) => {
     const when = `<span class="text-mute tabular-nums">D${t.day} ${pad(t.hour)}:${pad(t.minute)}:${pad(Math.floor(t.tSec % 60))}</span>`;
-    if (t.system === 2) return `<li class="py-1 border-b border-line">${when} <span class="text-violet-400">S2</span> ${esc(t.thought)} <span class="text-mute">— ${esc(t.question)} · ${t.provider}</span></li>`;
+    if (t.system === 2) return `<li class="py-1 border-b border-line">${when} <span class="text-violet-400">S2${t.deep ? " deep" : ""}</span> ${esc(t.thought)} <span class="text-mute">— ${esc(t.question)} · ${t.provider}</span></li>`;
+    if (t.system === 3 && t.stage === "habit") return `<li class="py-1 border-b border-line">${when} <span class="text-teal-300">habit</span> ${esc(habitText(t.event))}</li>`;
+    if (t.system === 3 && t.stage === "surprise") return `<li class="py-1 border-b border-line">${when} <span class="text-amber-300">surprise</span> ${esc(t.surprise.why)} <span class="text-mute">(${Math.round(t.surprise.score * 100)}%)</span></li>`;
+    if (t.system === 3 && (t.stage === "dream" || t.stage === "dream_narration")) return `<li class="py-1 border-b border-line">${when} <span class="text-violet-300">dream</span> <span class="italic">“${esc(t.dream.narrative)}”</span> <span class="text-mute">— worry: ${esc(t.dream.worry)}</span></li>`;
+    if (t.system === 3) {
+      const text = t.stage === "gist" ? (t.gists || []).map((g) => `thinks: “${esc(g.text)}” (${Math.round(g.confidence * 100)}%)`).join("; ") : `consolidated memories (${t.summary.scenesBefore} → ${t.summary.scenesAfter} moments${t.summary.merged ? ", merged " + t.summary.merged : ""}${t.summary.forgotten ? ", forgot " + t.summary.forgotten : ""})`;
+      return `<li class="py-1 border-b border-line">${when} <span class="text-sky-400">S3</span> ${text}</li>`;
+    }
     return `<li class="py-1 border-b border-line">${when} <span class="text-accent">S1</span> ${ACTION_TEXT[t.action] || t.action} <span class="text-mute">— ${esc(t.reason)}</span></li>`;
   }).join("") || '<li class="text-mute">no thoughts yet</li>';
 }
@@ -187,7 +273,7 @@ async function loadLlm() {
   const d = await fetch("/api/llm").then((r) => r.json());
   $("llm").innerHTML = !d.enabled ? '<div class="text-mute">No API keys set, System 2 is off.</div>' : d.providers.map((p) => {
     const status = p.cooldownSec > 0 ? `<span class="text-amber-400">cooling down ${p.cooldownSec > 3600 ? Math.round(p.cooldownSec / 3600) + " h" : p.cooldownSec + " s"}</span>` : '<span class="text-accent">ready</span>';
-    return `<div><div class="flex justify-between"><span class="font-semibold">${p.name}</span>${status}</div><div class="text-xs text-mute">${p.model} · ${p.calls} calls · ${(p.tokensIn + p.tokensOut).toLocaleString()} tokens${p.spendUsd ? " · $" + p.spendUsd.toFixed(3) : ""}${p.failures ? " · " + p.failures + " failed" : ""}</div>${p.lastError ? `<div class="text-xs text-mute truncate">last error: ${p.lastError}</div>` : ""}</div>`;
+    return `<div><div class="flex justify-between"><span class="font-semibold">${p.name}</span>${status}</div><div class="text-xs text-mute">${p.model} · ${p.calls} calls · ${(p.tokensIn + p.tokensOut).toLocaleString()} tokens${p.budgetUsd !== undefined ? " · pets $" + p.spendUsd.toFixed(3) + " of $" + p.budgetUsd.toFixed(2) + " ceiling" : p.spendUsd ? " · $" + p.spendUsd.toFixed(3) : ""}${p.teacherCalls ? " · teacher " + p.teacherCalls + " calls, $" + p.teacherSpendUsd.toFixed(3) + " (no ceiling)" : ""}${p.failures ? " · " + p.failures + " failed" : ""}</div>${p.lastError ? `<div class="text-xs text-mute truncate">last error: ${p.lastError}</div>` : ""}</div>`;
   }).join("") + '<div class="flex gap-2 pt-1">' + d.providers.map((p) => `<button data-test="${p.name}" class="flex-1 py-2 rounded-lg bg-slate-700 text-xs active:bg-slate-600">Test ${p.name}</button>`).join("") + '</div><div id="llmtest" class="text-xs text-mute break-words"></div>';
   document.querySelectorAll("[data-test]").forEach((b) => b.onclick = async () => {
     $("llmtest").textContent = "testing " + b.dataset.test + "…";
@@ -202,7 +288,7 @@ function renderEnv(e) {
     ["Weather", e.weather], ["Sun", Math.round(e.sunIntensity * 100) + "%"],
     ["Outdoor", e.outdoorTemp.toFixed(1) + " °C"], ["Indoor", e.indoorTemp.toFixed(1) + " °C"],
     ["Curtain", e.curtainOpen ? "open" : "closed"], ["Door", e.doorOpen ? "open" : "closed"],
-    ["Lamp", e.lampOn ? "on" : "off"], ["Heater", e.heaterOn ? "on" : "off"],
+    ["Lamp", e.lampOn ? "on" : "off"], ["Heater", e.heaterOn ? "on" : "off"], ["Charger hum", e.beaconOn === false ? "off" : "on"],
   ];
   $("env").innerHTML = rows.map(([k, v]) => `<div><div class="text-xs text-mute">${k}</div><div class="text-base font-semibold">${v}</div></div>`).join("");
 }
@@ -227,6 +313,13 @@ function drawMap() {
     else g.fillRect(o.x, o.y, o.w, o.h);
     g.fillStyle = "#cfd6dd"; g.font = "22px system-ui"; g.fillText(o.kind, o.x - (o.kind==="plant"||o.kind==="lamp"?o.w/2:0), o.y + (o.y > 600 ? -8 : o.h + 22 + (o.kind==="plant"||o.kind==="lamp"?o.w/2:0)));
   }
+  // the charger's hum: faint rings that drift outward (drawn only while it is on)
+  if (e.beaconOn !== false) {
+    const ch = layout.objects.find((o) => o.kind === "charger"), cx = ch.x + ch.w / 2, cy = ch.y + ch.h / 2, ph = (Date.now() / 2400) % 1;
+    g.save(); g.lineWidth = 2;
+    for (let i = 0; i < 3; i++) { const f = (ph + i / 3) % 1; g.strokeStyle = `rgba(250,204,21,${0.35 * (1 - f)})`; g.beginPath(); g.arc(cx, cy, 30 + f * 240, 0, 7); g.stroke(); }
+    g.restore();
+  }
   // pets
   for (const p of state.pets || []) {
     g.save(); g.translate(p.x, p.y);
@@ -244,6 +337,14 @@ function drawMap() {
     g.beginPath(); g.moveTo(0, -20); g.lineTo(18, 0); g.lineTo(0, 20); g.lineTo(-18, 0); g.closePath(); g.fill(); g.restore();
     g.fillStyle = "#fff"; g.font = "bold 22px system-ui"; g.textAlign = "center"; g.fillText("You", h.x, h.y - 28); g.textAlign = "start";
   }
+  // teacher
+  if (state.teacher) {
+    const t = state.teacher;
+    g.save(); g.translate(t.x, t.y); g.fillStyle = "#2dd4bf";
+    g.beginPath(); g.roundRect(-17, -17, 34, 34, 8); g.fill();
+    g.rotate(t.heading); g.fillStyle = "#06201c"; g.beginPath(); g.arc(11, 0, 4.5, 0, 7); g.fill(); g.restore();
+    g.fillStyle = "#99f6e4"; g.font = "bold 22px system-ui"; g.textAlign = "center"; g.fillText("Teacher", t.x, t.y - 28); g.textAlign = "start";
+  }
   // darkness overlay: night and no lights
   g.fillStyle = `rgba(5,8,25,${0.65 * dark})`; g.fillRect(0, 0, c.width, c.height);
   if (e.lampOn) {
@@ -256,13 +357,13 @@ function drawMap() {
   const now = Date.now();
   for (const [id, b] of Object.entries(bubbles)) {
     if (b.until < now) { delete bubbles[id]; continue; }
-    const pos = id === "human" ? state.human : (state.pets || []).find((p) => p.id === id);
+    const pos = id === "human" ? state.human : id === "teacher" ? state.teacher : (state.pets || []).find((p) => p.id === id);
     if (!pos) continue;
     g.font = "20px system-ui";
     const words = b.text.split(" "), lines = []; let cur = "";
     for (const w of words) { if ((cur + " " + w).trim().length > 24) { lines.push(cur); cur = w; } else cur = (cur + " " + w).trim(); }
     if (cur) lines.push(cur);
-    const shown = lines.slice(0, 4), w = Math.max(...shown.map((l) => g.measureText(l).width)) + 20, h = shown.length * 24 + 14;
+    const shown = lines.slice(0, 7), w = Math.max(...shown.map((l) => g.measureText(l).width)) + 20, h = shown.length * 24 + 14;
     const bx = Math.max(4, Math.min(c.width - w - 4, pos.x - w / 2)), by = Math.max(4, pos.y - 52 - h);
     g.fillStyle = "rgba(255,255,255,0.95)"; g.beginPath(); g.roundRect(bx, by, w, h, 10); g.fill();
     g.fillStyle = "#101418"; shown.forEach((l, i) => g.fillText(l, bx + 10, by + 24 + i * 24));
@@ -293,7 +394,7 @@ for (const s of SPEEDS) {
 $("pause").onclick = () => post("/api/pause", { paused: !(state && state.paused) });
 
 Promise.all([fetch("/api/status").then((r) => r.json()), fetch("/api/world").then((r) => r.json()), fetch("/api/events?limit=40").then((r) => r.json())])
-  .then(([s, w, evs]) => { layout = w; state = { ...s, env: w.env, sunPatch: w.sunPatch, pets: w.pets, human: w.human }; evs.reverse().forEach((e) => addEvent(e, false)); render(); });
+  .then(([s, w, evs]) => { layout = w; state = { ...s, env: w.env, sunPatch: w.sunPatch, pets: w.pets, human: w.human, teacher: w.teacher }; evs.reverse().forEach((e) => addEvent(e, false)); render(); });
 
 const bubbles = {};
 const feed = $("feed"), seenIds = new Set();
@@ -303,8 +404,9 @@ const escH = (t) => String(t).replace(/[&<>]/g, (c) => ({ "&": "&amp;", "<": "&l
 function addUtterance(u, live) {
   if (seenIds.has(u.id)) return; seenIds.add(u.id);
   const pets = petById(), fromPet = pets[u.from.id], human = u.from.kind === "human";
-  const who = human ? "You" : u.from.name, color = human ? "#f8fafc" : (fromPet ? fromPet.color : "#999");
-  const toName = u.to.kind === "human" ? "you" : u.to.kind === "pet" ? (u.to.name || u.to.id) : u.to.kind === "nearest" ? (u.to.name ? u.to.name : "nearby") : "everyone";
+  const teacherU = u.from.kind === "teacher";
+  const who = human ? "You" : u.from.name, color = human ? "#f8fafc" : teacherU ? "#2dd4bf" : (fromPet ? fromPet.color : "#999");
+  const toName = u.to.kind === "human" ? "you" : u.to.kind === "teacher" ? "the Teacher" : u.to.kind === "pet" ? (u.to.name || u.to.id) : u.to.kind === "nearest" ? (u.to.name ? u.to.name : "nearby") : "everyone";
   const heard = (u.heardBy || []).map((id) => (pets[id] ? pets[id].name : id));
   const missed = (u.notHeardBy || []).map((id) => (pets[id] ? pets[id].name : id));
   const t = u.trace || {};
@@ -318,7 +420,7 @@ function addUtterance(u, live) {
   el.querySelector("[data-why]").onclick = () => el.querySelector("[data-trace]").classList.toggle("hidden");
   feed.appendChild(el);
   while (feed.children.length > 80) feed.firstChild.remove();
-  if (live) { feed.scrollTop = feed.scrollHeight; bubbles[u.from.kind === "human" ? "human" : u.from.id] = { text: u.text, until: Date.now() + 9000 }; if (u.from.kind === "pet") $("chatnote").textContent = ""; }
+  if (live) { feed.scrollTop = feed.scrollHeight; bubbles[u.from.kind === "human" ? "human" : u.from.kind === "teacher" ? "teacher" : u.from.id] = { text: u.text, until: Date.now() + (teacherU ? 16000 : 9000) }; if (u.from.kind === "pet") $("chatnote").textContent = ""; }
 }
 
 fetch("/api/comms?limit=40").then((r) => r.json()).then((list) => { list.forEach((u) => addUtterance(u, false)); feed.scrollTop = feed.scrollHeight; });
@@ -375,6 +477,7 @@ function connect() {
     if (m.type === "status") { state = m; render(); }
     else if (m.type === "events") m.events.forEach((ev) => addEvent(ev, true));
     else if (m.type === "utterance") addUtterance(m.u, true);
+    else if (m.type === "reloaded") location.reload();
   };
   wsRef = ws;
   ws.onclose = () => setTimeout(connect, 2000);
@@ -383,5 +486,6 @@ connect();
 showTab(savedTab);
 </script>
 <script src="/dashboard.js"></script>
+<script src="/manage.js"></script>
 </body>
 </html>

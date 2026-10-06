@@ -10,6 +10,16 @@ The long-term goal is not to build a chatbot inside a cute shell. The goal is to
 
 ---
 
+## Current implementation status
+
+This document is the long-term design. What is built today is a running software 2D simulator with three pets, a
+human avatar, System 1 (rules) and System 2 (slow LLM thinking), scene memory, a learned charger hum, sleep
+consolidation, dreams, prediction and surprise, belief verification, optional self-tuned habits, an AI Teacher,
+saves and brain export/import, and a tabbed dashboard. See [HANDOFF.md](HANDOFF.md) for how to run it, the
+environment variables, and a detailed description and measurements for each feature.
+
+---
+
 # 1. Core Vision
 
 The central idea is:

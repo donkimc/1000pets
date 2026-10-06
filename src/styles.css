@@ -1,6 +1,7 @@
 @import "tailwindcss";
 @source "../public/index.html";
 @source "../public/dashboard.js";
+@source "../public/manage.js";
 
 @theme {
   --color-ink: #101418;

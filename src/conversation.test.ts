@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import { readFileSync } from "node:fs";
 import { Conversation, parseReply, type LlmLike } from "./conversation.js";
+import { looksLikeJson } from "./speech.js";
 import { Simulation } from "./sim.js";
 import { World } from "./world.js";
 import { Store } from "./store.js";
@@ -110,11 +111,44 @@ test("sleeping pets stay silent and say why", async () => {
 });
 
 test("pet-to-pet chatter stops after the chain limit", async () => {
-  const { conv, store, pip, moss } = await setup(() => '{"reply":"and so on"}');
+  // the first call writes pip's opening line (plain speech); every later call is a reply in JSON
+  const { conv, store, pip, moss } = await setup((n) => (n === 1 ? "Hello over there!" : '{"reply":"and so on"}'));
   pip.drives.social = 1; moss.drives.social = 1;
   await conv.maybeSpeak(pip, { to: "nearest", meaning: "greet" }, { thought: "t", question: "q", beliefs: [], intention: null, dropIntention: false, suggestion: "none", say: null }, { provider: "fake", model: "m" });
   // the fake model answers every call with a reply; wait long enough for any chain to play out
   await wait(9000);
   const comms = await store.readLog<any>("comms");
   assert.ok(comms.length >= 2 && comms.length <= GATE.maxPetChain + 1, `got ${comms.length} utterances`);
+});
+
+test("a small model's broken JSON is never spoken aloud: fields are recovered, or the pet stays silent", () => {
+  // exactly what Pip said in the chat: the "understood" object is never closed, so it is not valid JSON
+  const broken = 'json { "understood": { "intent": "statement", "topic": "Teacher\'s message", "claims": [ "The teacher" ], "reply": "I\'m here, Teacher; can I help you with anything?" }';
+  const r = parseReply(broken)!;
+  assert.equal(r.reply, "I'm here, Teacher; can I help you with anything?");
+  assert.equal(r.intent, "statement");
+  assert.equal(r.topic, "Teacher's message");
+  assert.deepEqual(r.claims, ["The teacher"]);
+  assert.doesNotMatch(r.reply!, /understood|intent|\{|json/);
+  // fenced and truncated
+  assert.equal(parseReply('```json\n{"understood": {"intent": "greeting", "topic": "hi"}, "reply": "Hello there!"')!.reply, "Hello there!");
+  // an explicit "stay silent"
+  assert.equal(parseReply('{"understood": {"intent": "other", "topic": ""}, "reply": null')!.reply, null);
+  // escaped quotes inside the reply
+  assert.equal(parseReply('{"reply": "She said \\"hi\\" to me", "understood": {')!.reply, 'She said "hi" to me');
+  // structured text with no reply at all: nothing to say
+  assert.equal(parseReply('json { "understood": { "intent": "statement", "topic": "x" }'), null);
+  assert.equal(parseReply('```json\n{"gists": []}\n```')?.reply ?? null, null, "valid JSON with no reply field is silence, not speech");
+  // ordinary speech still passes through untouched
+  assert.equal(parseReply("I like it here.")!.reply, "I like it here.");
+  assert.equal(looksLikeJson("I like it here."), false);
+  assert.equal(looksLikeJson('{"reply": "x"}'), true);
+  assert.equal(looksLikeJson("Then the \"reply\": field"), true);
+});
+
+test("initiative speech and teacher lessons also refuse structured text", async () => {
+  const { conv, calls } = await setup(() => '{"thought": "x", "reply": "hello"}');
+  void calls;
+  const said = await (conv as any).express(Object.assign({}, { name: "Pip" }), "say hi");
+  assert.equal(said, null, "JSON is not a sentence a pet can say");
 });

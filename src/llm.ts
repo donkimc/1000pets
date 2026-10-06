@@ -14,6 +14,8 @@ export interface ProviderConfig {
   priceOutPerM: number;
   rpm: number; // client-side requests-per-minute ceiling
   budgetUsd?: number; // stop using this provider once estimated spend reaches this
+  timeoutMs?: number; // per-request timeout for this provider (default: gateway timeout, 30s)
+  maxConcurrent?: number; // calls allowed at once; when full the provider counts as busy and the next one is tried
 }
 
 export interface LlmResult { text: string; provider: string; model: string; tokensIn: number; tokensOut: number }
@@ -25,14 +27,28 @@ export interface ProviderStats {
   failures: number;
   tokensIn: number;
   tokensOut: number;
-  spendUsd: number;
+  spendUsd: number; // counts toward the provider's budget ceiling (pets' thinking and speech)
+  teacherCalls: number; // the AI teacher is accounted separately and is not limited by the ceiling
+  teacherSpendUsd: number;
   cooldownUntil: number; // epoch ms
   lastError: string;
   lastErrorAt: number;
   lastRemaining: { requests?: string; tokens?: string };
+  budgetUsd?: number; // the provider's ceiling, filled in by snapshot()
 }
 
 export class LlmUnavailable extends Error {}
+
+export interface CompleteOpts {
+  maxTokens?: number;
+  temperature?: number;
+  json?: boolean; // ask the provider for a JSON object reply
+  timeoutMs?: number; // overrides the provider's own timeout for this call
+  providers?: string[]; // only these providers, in this order
+  account?: "teacher"; // teacher calls are tracked separately and ignore the budget ceiling
+  waitMs?: number; // if every provider is merely busy (not failing), wait up to this long for one to free up instead of giving up
+  patienceMs?: number; // join the line for the first (preferred) provider if it is busy, up to this long, before trying the others; first come, first served
+}
 
 type FetchFn = typeof fetch;
 
@@ -40,6 +56,8 @@ export class LlmGateway {
   private stats = new Map<string, ProviderStats>();
   private recent = new Map<string, number[]>(); // request timestamps for the rpm ceiling
   private consecutiveErrors = new Map<string, number>();
+  // First-in, first-out line for providers that serve one request (or a few) at a time, like a local model.
+  private slots = new Map<string, { inflight: number; queue: { resolve: (ok: boolean) => void; timer: ReturnType<typeof setTimeout> }[] }>();
 
   constructor(
     private providers: ProviderConfig[],
@@ -47,7 +65,7 @@ export class LlmGateway {
   ) {
     for (const p of providers) {
       this.stats.set(p.name, {
-        name: p.name, model: p.model, calls: 0, failures: 0, tokensIn: 0, tokensOut: 0, spendUsd: 0,
+        name: p.name, model: p.model, calls: 0, failures: 0, tokensIn: 0, tokensOut: 0, spendUsd: 0, teacherCalls: 0, teacherSpendUsd: 0,
         cooldownUntil: 0, lastError: "", lastErrorAt: 0, lastRemaining: {},
       });
       this.recent.set(p.name, []);
@@ -58,39 +76,117 @@ export class LlmGateway {
 
   get enabled(): boolean { return this.providers.length > 0; }
 
-  snapshot(): ProviderStats[] { return [...this.stats.values()].map((s) => ({ ...s })); }
+  snapshot(): ProviderStats[] {
+    return [...this.stats.values()].map((s) => ({ ...s, budgetUsd: this.providers.find((p) => p.name === s.name)?.budgetUsd }));
+  }
 
   /** Restore counters (not cooldowns) saved by a previous run. */
   restore(saved: ProviderStats[] | null) {
     for (const s of saved ?? []) {
       const cur = this.stats.get(s.name);
-      if (cur) Object.assign(cur, { calls: s.calls, failures: s.failures, tokensIn: s.tokensIn, tokensOut: s.tokensOut, spendUsd: s.spendUsd });
+      if (cur) Object.assign(cur, { calls: s.calls, failures: s.failures, tokensIn: s.tokensIn, tokensOut: s.tokensOut, spendUsd: s.spendUsd, teacherCalls: s.teacherCalls ?? 0, teacherSpendUsd: s.teacherSpendUsd ?? 0 });
     }
   }
 
-  private available(p: ProviderConfig): string | null {
+  private slotsOf(name: string) {
+    let s = this.slots.get(name);
+    if (!s) this.slots.set(name, (s = { inflight: 0, queue: [] }));
+    return s;
+  }
+
+  /** Take a place at the provider: at once if one is free, otherwise wait in line up to waitMs. False if the wait runs out. */
+  private take(p: ProviderConfig, waitMs: number): Promise<boolean> {
+    if (!p.maxConcurrent) return Promise.resolve(true);
+    const s = this.slotsOf(p.name);
+    if (s.inflight < p.maxConcurrent) {
+      s.inflight++;
+      return Promise.resolve(true);
+    }
+    if (waitMs <= 0) return Promise.resolve(false);
+    return new Promise((resolve) => {
+      const w = {
+        resolve: (ok: boolean) => { clearTimeout(w.timer); resolve(ok); },
+        timer: setTimeout(() => { s.queue.splice(s.queue.indexOf(w), 1); resolve(false); }, waitMs),
+      };
+      s.queue.push(w);
+    });
+  }
+
+  /** Give the place to whoever has waited longest, or free it. */
+  private release(p: ProviderConfig): void {
+    if (!p.maxConcurrent) return;
+    const s = this.slotsOf(p.name);
+    const next = s.queue.shift();
+    if (next) next.resolve(true); // the place passes straight on, so nobody can jump the line
+    else s.inflight--;
+  }
+
+  /** How many calls are waiting in line for a provider (for the dashboard and tests). */
+  queued(name: string): number {
+    return this.slots.get(name)?.queue.length ?? 0;
+  }
+
+  private available(p: ProviderConfig, ignoreBudget = false, ignoreBusy = false): string | null {
     const st = this.stats.get(p.name)!;
     const now = this.now();
     if (now < st.cooldownUntil) return `cooling down for ${Math.ceil((st.cooldownUntil - now) / 1000)}s`;
-    if (p.budgetUsd !== undefined && st.spendUsd >= p.budgetUsd) return "budget reached";
+    if (!ignoreBudget && p.budgetUsd !== undefined && st.spendUsd >= p.budgetUsd) return "budget reached";
     const window = this.recent.get(p.name)!.filter((t) => now - t < 60_000);
     this.recent.set(p.name, window);
     if (window.length >= p.rpm) return "client rpm ceiling";
+    if (!ignoreBusy && p.maxConcurrent && this.slotsOf(p.name).inflight >= p.maxConcurrent) return "busy";
     return null;
   }
 
-  async complete(messages: ChatMessage[], opts: { maxTokens?: number; temperature?: number } = {}): Promise<LlmResult> {
-    const reasons: string[] = [];
-    for (const p of this.providers) {
-      const why = this.available(p);
-      if (why) { reasons.push(`${p.name}: ${why}`); continue; }
-      try {
-        return await this.callProvider(p, messages, opts);
-      } catch (e: any) {
-        reasons.push(`${p.name}: ${e.message}`);
+  async complete(messages: ChatMessage[], opts: CompleteOpts = {}): Promise<LlmResult> {
+    const order = opts.providers
+      ? opts.providers.map((n) => this.providers.find((p) => p.name === n)).filter((p): p is ProviderConfig => !!p)
+      : this.providers;
+    const deadline = Date.now() + (opts.waitMs ?? 0);
+    for (;;) {
+      const reasons: string[] = [];
+      let busy = false;
+      for (const [i, p] of order.entries()) {
+        const teacher = opts.account === "teacher";
+        const why = this.available(p, teacher);
+        let held = false;
+        if (!why) {
+          held = await this.take(p, 0);
+        } else if (why === "busy" && i === 0 && (opts.patienceMs ?? 0) > 0) {
+          // The preferred provider is busy: join the line for it instead of moving on at once.
+          held = await this.take(p, opts.patienceMs!);
+          const later = held ? this.available(p, teacher, true) : null; // it may have started cooling down while we waited
+          if (later) {
+            this.release(p);
+            held = false;
+            reasons.push(`${p.name}: ${later}`);
+            continue;
+          }
+        } else {
+          reasons.push(`${p.name}: ${why}`);
+          if (why === "busy") busy = true;
+          continue;
+        }
+        if (!held) {
+          reasons.push(`${p.name}: busy`);
+          busy = true;
+          continue;
+        }
+        try {
+          return await this.callProvider(p, messages, opts);
+        } catch (e: any) {
+          reasons.push(`${p.name}: ${e.message}`);
+        } finally {
+          this.release(p);
+        }
       }
+      // A busy provider will free up soon; a slow background job may choose to wait for it.
+      if (busy && Date.now() < deadline) {
+        await new Promise((r) => setTimeout(r, 1000));
+        continue;
+      }
+      throw new LlmUnavailable(reasons.join("; ") || "no providers configured");
     }
-    throw new LlmUnavailable(reasons.join("; ") || "no providers configured");
   }
 
   private fail(p: ProviderConfig, message: string, cooldownMs: number) {
@@ -114,17 +210,21 @@ export class LlmGateway {
     }
   }
 
-  private async callProvider(p: ProviderConfig, messages: ChatMessage[], opts: { maxTokens?: number; temperature?: number }): Promise<LlmResult> {
+  private async callProvider(p: ProviderConfig, messages: ChatMessage[], opts: CompleteOpts): Promise<LlmResult> {
+    return this.doCall(p, messages, opts);
+  }
+
+  private async doCall(p: ProviderConfig, messages: ChatMessage[], opts: CompleteOpts): Promise<LlmResult> {
     const st = this.stats.get(p.name)!;
     this.recent.get(p.name)!.push(this.now());
     const ctl = new AbortController();
-    const timer = setTimeout(() => ctl.abort(), this.opts.timeoutMs ?? 30_000);
+    const timer = setTimeout(() => ctl.abort(), opts.timeoutMs ?? p.timeoutMs ?? this.opts.timeoutMs ?? 30_000);
     let res: Response;
     try {
       res = await (this.opts.fetchFn ?? fetch)(`${p.baseUrl}/chat/completions`, {
         method: "POST",
         headers: { "content-type": "application/json", authorization: `Bearer ${p.apiKey}` },
-        body: JSON.stringify({ model: p.model, messages, max_tokens: opts.maxTokens ?? 500, temperature: opts.temperature ?? 0.7, ...p.extraBody }),
+        body: JSON.stringify({ model: p.model, messages, max_tokens: opts.maxTokens ?? 500, temperature: opts.temperature ?? 0.7, ...(opts.json ? { response_format: { type: "json_object" } } : {}), ...p.extraBody }),
         signal: ctl.signal,
       });
     } catch (e: any) {
@@ -167,7 +267,11 @@ export class LlmGateway {
     st.calls++;
     st.tokensIn += tokensIn;
     st.tokensOut += tokensOut;
-    st.spendUsd += (tokensIn * p.priceInPerM + tokensOut * p.priceOutPerM) / 1e6;
+    const cost = (tokensIn * p.priceInPerM + tokensOut * p.priceOutPerM) / 1e6;
+    if (opts.account === "teacher") {
+      st.teacherCalls++;
+      st.teacherSpendUsd += cost;
+    } else st.spendUsd += cost;
     return { text, provider: p.name, model: p.model, tokensIn, tokensOut };
   }
 }
@@ -181,6 +285,22 @@ export function cleanKey(v: string | undefined): string {
 export function gatewayFromEnv(raw: NodeJS.ProcessEnv = process.env): LlmGateway {
   const env: NodeJS.ProcessEnv = { ...raw, GROQ_API_KEY: cleanKey(raw.GROQ_API_KEY), DEEPSEEK_API_KEY: cleanKey(raw.DEEPSEEK_API_KEY) };
   const providers: ProviderConfig[] = [];
+  // Local model (Ollama, LM Studio, llama.cpp: any OpenAI-compatible server). Tried first; free, no rate limit.
+  if (env.LOCAL_LLM_MODEL) {
+    providers.push({
+      name: "local",
+      baseUrl: env.LOCAL_LLM_BASE_URL ?? "http://localhost:11434/v1",
+      apiKey: env.LOCAL_LLM_API_KEY || "local",
+      model: env.LOCAL_LLM_MODEL,
+      priceInPerM: 0,
+      priceOutPerM: 0,
+      rpm: 30,
+      timeoutMs: Number(env.LOCAL_LLM_TIMEOUT_SEC ?? 90) * 1000, // CPU-only inference can be slow
+      maxConcurrent: Number(env.LOCAL_LLM_CONCURRENCY ?? 1), // a local server works through requests one at a time; extras queue (or go to the next provider)
+      // A small model likes to repeat itself; a mild presence penalty nudges it toward something new. Zero turns it off.
+      ...(Number(env.LOCAL_LLM_PRESENCE_PENALTY ?? 0.4) > 0 ? { extraBody: { presence_penalty: Number(env.LOCAL_LLM_PRESENCE_PENALTY ?? 0.4) } } : {}),
+    });
+  }
   if (env.GROQ_API_KEY) {
     providers.push({
       name: "groq",
@@ -203,7 +323,7 @@ export function gatewayFromEnv(raw: NodeJS.ProcessEnv = process.env): LlmGateway
       priceInPerM: 0.27, // conservative cache-miss prices
       priceOutPerM: 1.1,
       rpm: 30,
-      budgetUsd: Number(env.DEEPSEEK_BUDGET_USD ?? 4),
+      budgetUsd: Number(env.DEEPSEEK_BUDGET_USD ?? 1),
     });
   }
   return new LlmGateway(providers);

@@ -8,11 +8,12 @@
     "node": ">=20"
   },
   "scripts": {
-    "dev": "npm run build:css && tsx watch src/server.ts",
+    "dev": "npm run build:css && tsx watch --env-file-if-exists=.env.local src/server.ts",
     "build": "npm run build:css && tsc -p tsconfig.json",
     "start": "node dist/server.js",
     "test": "tsx --test src/*.test.ts",
-    "build:css": "tailwindcss -i src/styles.css -o public/app.css --minify"
+    "build:css": "tailwindcss -i src/styles.css -o public/app.css --minify",
+    "bench:model": "tsx scripts/bench-local-model.ts"
   },
   "dependencies": {
     "express": "^4.21.2",

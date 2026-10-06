@@ -80,7 +80,7 @@
     ].join("");
   }
 
-  const GROUPS = [["Sleeping", ["sleep"]], ["Charging", ["charge"]], ["Seeking light", ["seek_light"]], ["Exploring", ["wander", "approach_object", "inspect", "pause"]], ["With others", ["approach_pet", "socialize"]], ["Avoiding", ["avoid"]], ["Powered down", ["dormant"]]];
+  const GROUPS = [["Sleeping", ["sleep"]], ["Charging", ["charge"]], ["Seeking light", ["seek_light"]], ["Following the tone", ["follow_tone"]], ["Exploring", ["wander", "approach_object", "inspect", "pause"]], ["With others", ["approach_pet", "socialize"]], ["Avoiding", ["avoid"]], ["Powered down", ["dormant"]]];
   function renderActivity(d) {
     $("activity").innerHTML = d.pets.map((p) => {
       const total = Object.values(p.stats.actionSec).reduce((a, b) => a + b, 0) || 1;
@@ -112,6 +112,11 @@
       series: d.pets.map((p) => ({ name: p.name, color: p.color })),
       rows: rows.map((r) => ({ x: r.simMinute, label: label(r), values: d.pets.map((p) => r.pets.find((q) => q.id === p.id)?.energy ?? null) })),
     });
+    lineChart($("chart-surprise"), {
+      title: "Biggest surprise per pet in each 15 minutes", ticks: [0, 0.25, 0.5, 0.75, 1], yFmt: (v) => v.toFixed(2),
+      series: d.pets.map((p) => ({ name: p.name, color: p.color })),
+      rows: rows.map((r) => ({ x: r.simMinute, label: label(r), values: d.pets.map((p) => r.pets.find((q) => q.id === p.id)?.surprise ?? null) })),
+    });
     lineChart($("chart-temp"), {
       title: "Temperature", yFmt: (v) => v.toFixed(1) + "°",
       series: [{ name: "Indoor", color: ENV.indoor }, { name: "Outdoor", color: ENV.outdoor }],
@@ -137,10 +142,31 @@
     $("dthoughts").innerHTML = list.map((t) => {
       const p = pets[t.pet] || { name: t.pet, color: "#999" };
       const head = `<span class="text-mute tabular-nums">D${t.day} ${pad(t.hour)}:${pad(t.minute)}:${pad(Math.floor(t.tSec % 60))}</span> <span class="inline-block w-2 h-2 rounded-full" style="background:${p.color}"></span> <b>${esc(p.name)}</b>`;
+      if (t.system === 3 && t.stage === "habit") return `<li class="py-1 border-b border-line">${head} <span class="text-teal-300">habit</span> ${esc(t.event.type === "trial_started" ? `trying ${t.event.knob} ${t.event.from} → ${t.event.to}: ${t.event.reason}` : `${t.event.type} ${t.event.knob} ${t.event.from} → ${t.event.to}: ${t.event.why}`)}</li>`;
+      if (t.system === 3 && t.stage === "surprise") return `<li class="py-1 border-b border-line">${head} <span class="text-amber-300">surprise</span> ${esc(t.surprise.why)} <span class="text-mute">(${Math.round(t.surprise.score * 100)}%)</span></li>`;
+      if (t.system === 3 && (t.stage === "dream" || t.stage === "dream_narration")) return `<li class="py-1 border-b border-line">${head} <span class="text-violet-300">dream</span> <span class="italic">“${esc(t.dream.narrative)}”</span><div class="text-mute">${t.stage === "dream_narration" ? "narrated by " + esc(t.provider || "") + " · " : ""}worry: ${esc(t.dream.worry)}</div></li>`;
+      if (t.system === 3) return `<li class="py-1 border-b border-line">${head} <span class="text-sky-400">S3 sleep</span> ${sleepText(t)}</li>`;
       return t.system === 2
-        ? `<li class="py-1 border-b border-line">${head} <span class="text-violet-400">S2</span> ${esc(t.thought)}<div class="text-mute">${esc(t.question)} · ${esc(t.provider)}${t.say ? " · wanted to say: " + esc(t.say.meaning) : ""}</div></li>`
+        ? `<li class="py-1 border-b border-line">${head} <span class="text-violet-400">S2${t.deep ? " deep" : ""}</span> ${esc(t.thought)}<div class="text-mute">${esc(t.question)} · ${esc(t.provider)}${t.say ? " · wanted to say: " + esc(t.say.meaning) : ""}</div></li>`
         : `<li class="py-1 border-b border-line">${head} <span class="text-accent">S1</span> ${esc(t.action.replace(/_/g, " "))} <span class="text-mute">— ${esc(t.reason)}</span></li>`;
     }).join("") || '<li class="text-mute py-2">no thoughts yet</li>';
+  }
+
+  // A night's consolidation (rule-based) or a gist written while asleep (one model call).
+  function sleepText(t) {
+    if (t.stage === "gist") return (t.gists || []).map((g) => `thinks: “${esc(g.text)}” <span class="text-mute">(${Math.round(g.confidence * 100)}% sure, provisional)</span>`).join("<br>") + `<div class="text-mute">${esc(t.provider || "")}</div>`;
+    const s = t.summary || {}, bits = [];
+    if (s.merged) bits.push(`merged ${s.merged} repeated moments`);
+    if (s.forgotten) bits.push(`forgot ${s.forgotten} faint ones`);
+    if (s.claimsSupported) bits.push(`${s.claimsSupported} things it was told were borne out`);
+    if (s.beliefsStrengthened) bits.push(`${s.beliefsStrengthened} beliefs strengthened`);
+    if (s.beliefsFaded) bits.push(`${s.beliefsFaded} weak beliefs let go`);
+    if (s.gistsStrengthened) bits.push(`${s.gistsStrengthened} patterns strengthened`);
+    if (s.gistsDropped) bits.push(`${s.gistsDropped} patterns dropped`);
+    if (s.claimsContradicted) bits.push(`${s.claimsContradicted} things it was told found WRONG`);
+    if (s.beliefsRefuted) bits.push(`${s.beliefsRefuted} beliefs contradicted by experience`);
+    if (s.gistsConflicted) bits.push(`${s.gistsConflicted} patterns merged or weakened`);
+    return `consolidated its memories (${s.scenesBefore} → ${s.scenesAfter} moments)${bits.length ? ": " + bits.join(", ") : ": nothing needed changing"}`;
   }
 
   function chips(el, items, current, onPick) {
@@ -156,7 +182,7 @@
     renderKpis(d, llm); renderCharts(d, rows); renderActivity(d); renderSpeech(d); renderStorage(d);
     chips($("range"), [[6, "6 h"], [24, "24 h"], [168, "7 days"], [720, "30 days"]], rangeHours, (v) => { rangeHours = Number(v); loadDash(); });
     chips($("tpet"), [["", "All pets"], ...d.pets.map((p) => [p.id, p.name])], thoughtPet, (v) => { thoughtPet = v; loadDash(); });
-    chips($("tsys"), [[0, "S1 + S2"], [1, "S1 fast"], [2, "S2 slow"]], thoughtSys, (v) => { thoughtSys = Number(v); loadDash(); });
+    chips($("tsys"), [[0, "All"], [1, "S1 fast"], [2, "S2 slow"], [3, "S3 sleep"]], thoughtSys, (v) => { thoughtSys = Number(v); loadDash(); });
     loadThoughts();
   }
 

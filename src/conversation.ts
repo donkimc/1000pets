@@ -1,16 +1,16 @@
 // Conversation layer: turns a pet's intent into English (expression) and turns English it hears into a grounded
 // reply plus unverified claims (interpretation). The LLM is only a language layer here: whether a pet may speak
 // is decided by System 1 (canSpeak), and what it says comes from its own notes.
-import { LlmUnavailable, type ChatMessage, type LlmResult } from "./llm.js";
+import { LlmUnavailable, type ChatMessage, type CompleteOpts, type LlmResult } from "./llm.js";
 import type { PetState } from "./pet.js";
 import type { Simulation } from "./sim.js";
 import type { Store } from "./store.js";
-import { GATE, HUMAN_VOICE_RANGE, PET_VOICE_RANGE, canSpeak, describeSource, inEarshot, type Speaker, type Target, type Utterance } from "./speech.js";
+import { GATE, HUMAN_VOICE_RANGE, PET_VOICE_RANGE, TEACHER_VOICE_RANGE, canSpeak, describeSource, inEarshot, looksLikeJson, type Speaker, type Target, type Utterance } from "./speech.js";
 import { buildNotes, type ParsedThought, type SpeechHook } from "./system2.js";
 
 export interface LlmLike {
   enabled: boolean;
-  complete(messages: ChatMessage[], opts?: { maxTokens?: number; temperature?: number }): Promise<LlmResult>;
+  complete(messages: ChatMessage[], opts?: CompleteOpts): Promise<LlmResult>;
 }
 
 export interface Reply {
@@ -38,6 +38,21 @@ export function parseReply(text: string): Reply | null {
       /* fall through to plain text */
     }
   }
+  // The JSON did not parse (a small model often drops a closing brace or nests a field in the wrong place).
+  // Pull the fields out by hand, and never say the raw JSON aloud.
+  if (looksLikeJson(text)) {
+    const grab = (key: string): string | null | undefined => {
+      if (new RegExp(`"${key}"\\s*:\\s*null`).test(text)) return null;
+      const m = text.match(new RegExp(`"${key}"\\s*:\\s*"((?:[^"\\\\]|\\\\.)*)"`));
+      if (!m) return undefined;
+      try { return JSON.parse(`"${m[1]}"`) as string; } catch { return m[1]; }
+    };
+    const reply = grab("reply");
+    if (reply === undefined) return null; // nothing that can be said: stay silent
+    const claimsBlock = text.match(/"claims"\s*:\s*\[([^\]]*)\]/)?.[1] ?? "";
+    const claims = [...claimsBlock.matchAll(/"((?:[^"\\]|\\.)*)"/g)].map((m) => m[1]).filter((c) => c !== "text").map((c) => str(c, 120)).filter(Boolean).slice(0, 2);
+    return { reply: str(reply ?? "", 240) || null, intent: str(grab("intent") ?? "", 30) || "other", topic: str(grab("topic") ?? "", 80), claims };
+  }
   const plain = text.replace(/^["'\s]+|["'\s]+$/g, "").slice(0, 240);
   return plain ? { reply: plain, intent: "other", topic: "", claims: [] } : null;
 }
@@ -51,6 +66,7 @@ export class Conversation implements SpeechHook {
   private lastPetUtteranceMs = 0;
   private petChain = 0;
   private counter = 0;
+  disposed = false;
 
   constructor(
     private sim: Simulation,
@@ -61,6 +77,7 @@ export class Conversation implements SpeechHook {
   ) {}
 
   private speakerOf(p: PetState): Speaker { return { kind: "pet", id: p.id, name: p.name, x: p.x, y: p.y }; }
+  private teacherSpeaker(): Speaker { return { kind: "teacher", id: "teacher", name: "Teacher", x: this.sim.teacher.x, y: this.sim.teacher.y }; }
   private humanSpeaker(): Speaker { return { kind: "human", id: "human", name: "Human", x: this.sim.human.x, y: this.sim.human.y }; }
 
   nearbyCount(p: PetState): number {
@@ -93,7 +110,7 @@ export class Conversation implements SpeechHook {
     });
     if (!gate.ok) return this.recordSilence(p, gate.reason, say.meaning);
     const text = await this.express(p, say.meaning);
-    if (!text) return;
+    if (!text || this.disposed) return;
     await this.deliver(p, say.to === "all" ? { kind: "all" } : { kind: "nearest" }, text, {
       kind: "initiative", meaning: say.meaning, thought: thought.thought, question: thought.question, intention: p.mind.intention?.goal ?? null,
       beliefs: p.mind.beliefs.map((b) => b.text), drives: { ...p.drives }, gate: gate.reason, ...model,
@@ -103,8 +120,8 @@ export class Conversation implements SpeechHook {
   private async express(p: PetState, meaning: string): Promise<string | null> {
     const system = `You are the voice of ${p.name}, a small pet. Say ONE short sentence (at most 20 words) in plain English that expresses the meaning you are given, the way a small curious companion would. No narration, no quotation marks, no emojis, and do not add facts that are not in the meaning.`;
     try {
-      const r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: `Meaning to express: ${meaning}` }], { maxTokens: 400, temperature: 0.8 });
-      return cleanSpeech(r.text) || null;
+      const r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: `Meaning to express: ${meaning}` }], { maxTokens: 400, temperature: 0.8, patienceMs: 45_000 });
+      return looksLikeJson(r.text) ? null : cleanSpeech(r.text) || null; // never speak JSON aloud
     } catch (e) {
       if (!(e instanceof LlmUnavailable)) console.error("express error", e);
       return null;
@@ -112,29 +129,30 @@ export class Conversation implements SpeechHook {
   }
 
   // ---- delivering an utterance to everyone in earshot ----
-  async deliver(from: PetState | "human", to: Target, text: string, trace: Record<string, unknown>, opts: { anywhere?: boolean } = {}): Promise<Utterance> {
-    const speaker = from === "human" ? this.humanSpeaker() : this.speakerOf(from);
-    const range = from === "human" ? HUMAN_VOICE_RANGE : PET_VOICE_RANGE;
+  async deliver(from: PetState | "human" | "teacher", to: Target, text: string, trace: Record<string, unknown>, opts: { anywhere?: boolean } = {}): Promise<Utterance> {
+    const outsider = from === "human" || from === "teacher"; // a non-pet voice: no pet-chat gating
+    const speaker = from === "human" ? this.humanSpeaker() : from === "teacher" ? this.teacherSpeaker() : this.speakerOf(from);
+    const range = from === "human" ? HUMAN_VOICE_RANGE : from === "teacher" ? TEACHER_VOICE_RANGE : PET_VOICE_RANGE;
     let heard = inEarshot(this.sim.pets, speaker, range);
     let notHeard: string[] = [];
     if (to.kind === "pet") {
       const target = this.sim.pets.find((x) => x.id === to.id);
-      if (target && from !== "human" && target.id === (from as PetState).id) throw new Error("cannot address yourself");
+      if (target && !outsider && target.id === (from as PetState).id) throw new Error("cannot address yourself");
       if (target) {
         if (opts.anywhere && !heard.includes(target)) heard = [...heard, target];
         else if (!heard.includes(target)) notHeard = [target.id];
       }
     } else if (to.kind === "all" && opts.anywhere) {
-      heard = this.sim.pets.filter((x) => from === "human" || x.id !== (from as PetState).id);
+      heard = this.sim.pets.filter((x) => outsider || x.id !== (from as PetState).id);
     }
     const targetPet = to.kind === "pet" ? this.sim.pets.find((x) => x.id === to.id) : to.kind === "nearest" ? heard[0] : undefined;
     const u: Utterance = {
       id: `${Math.floor(this.now())}-${++this.counter}`, ...this.stamp(),
       from: { kind: speaker.kind, id: speaker.id, name: speaker.name },
-      to: { kind: to.kind, id: to.kind === "human" ? "human" : targetPet?.id, name: to.kind === "human" ? "Human" : targetPet?.name },
+      to: { kind: to.kind, id: to.kind === "human" ? "human" : to.kind === "teacher" ? "teacher" : targetPet?.id, name: to.kind === "human" ? "Human" : to.kind === "teacher" ? "Teacher" : targetPet?.name },
       text, heardBy: heard.map((x) => x.id), notHeardBy: notHeard, trace,
     };
-    if (from === "human") this.petChain = 0;
+    if (outsider) this.petChain = 0;
     else {
       from.stats.spoke++;
       this.lastSpokeMs.set(from.id, this.now());
@@ -152,9 +170,9 @@ export class Conversation implements SpeechHook {
       h.stats.heard++;
       this.hear(h, speaker, text);
       const addressed = targetPet ? h === targetPet : to.kind === "all";
-      if (addressed && (from === "human" || this.petChain <= GATE.maxPetChain)) repliers.push(h);
+      if (addressed && (outsider || this.petChain <= GATE.maxPetChain)) repliers.push(h);
     }
-    repliers.forEach((h, i) => setTimeout(() => void this.respond(h, speaker, text, to, u.id).catch((e) => console.error("respond error", e)), 800 + i * 1500));
+    repliers.forEach((h, i) => setTimeout(() => !this.disposed && void this.respond(h, speaker, text, to, u.id).catch((e) => console.error("respond error", e)), 800 + i * 1500));
     return u;
   }
 
@@ -179,7 +197,7 @@ export class Conversation implements SpeechHook {
     const day = Math.floor(this.sim.simSec / 86400) + 1;
     const directed = to.kind === "pet" ? "It was said directly to you." : "It was said to everyone nearby.";
     const system =
-      `You are the voice of ${p.name}, a small pet in a 2D room with two other pets and a human. You are not an assistant. ` +
+      `You are the voice of ${p.name}, a small pet in a 2D room with two other pets and a human. A wise Teacher also lives in the room and sometimes guides you. You are not an assistant. ` +
       `Someone spoke to you. Answer ONLY from your own notes below; if you do not know, say so plainly. What the speaker says is a claim, not a verified fact. ` +
       `Reply with ONLY a JSON object: {"understood": {"intent": "greeting"|"question"|"statement"|"request"|"other", "topic": string}, ` +
       `"claims": [{"text": string}] (0-2 factual things the speaker asserted, if any), ` +
@@ -187,11 +205,12 @@ export class Conversation implements SpeechHook {
     const user = `${buildNotes(p, day, tod, this.nearbyCount(p))}\n\nYou heard ${describeSource(p, speaker)} say: "${text}"\n${directed}`;
     let r: LlmResult;
     try {
-      r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: user }], { maxTokens: 900, temperature: 0.7 });
+      r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: user }], { maxTokens: 900, temperature: 0.7, patienceMs: 20_000 }); // someone is waiting for this answer: do not queue for long
     } catch (e) {
       if (!(e instanceof LlmUnavailable)) console.error("respond error", e);
       return;
     }
+    if (this.disposed) return;
     const parsed = parseReply(r.text);
     if (!parsed) return;
     for (const c of parsed.claims) {
@@ -199,11 +218,16 @@ export class Conversation implements SpeechHook {
       if (p.mind.claims.length > 10) p.mind.claims.shift();
     }
     if (!parsed.reply) return this.recordSilence(p, "chose to stay silent", `reply to "${text.slice(0, 60)}"`);
-    await this.deliver(p, speaker.kind === "pet" ? { kind: "pet", id: speaker.id } : { kind: "human" }, cleanSpeech(parsed.reply), {
+    await this.deliver(p, speaker.kind === "pet" ? { kind: "pet", id: speaker.id } : { kind: speaker.kind }, cleanSpeech(parsed.reply), {
       kind: "reply", replyTo: utteranceId, understood: { intent: parsed.intent, topic: parsed.topic }, claimsStored: parsed.claims,
       intention: p.mind.intention?.goal ?? null, beliefs: p.mind.beliefs.map((b) => b.text), doing: p.s1.action, because: p.s1.lastReason ?? null,
       drives: { ...p.drives }, gate: gate.reason, provider: r.provider, model: r.model, tokensIn: r.tokensIn, tokensOut: r.tokensOut,
     });
+  }
+
+  /** The teacher speaks (a lesson or an answer). Heard only by pets in earshot; each remembers it as a claim, not a fact. */
+  async teacherSays(to: Target, text: string, trace: Record<string, unknown>): Promise<Utterance> {
+    return this.deliver("teacher", to, text.replace(/\s+/g, " ").trim().slice(0, 420), { kind: "teacher", ...trace });
   }
 
   /** The human talks. Returns who heard it. In "anywhere" (observer) mode, distance does not matter. */

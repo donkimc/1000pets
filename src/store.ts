@@ -1,6 +1,6 @@
 // Append-only JSONL logs plus JSON snapshots, stored under DATA_DIR/runs/<runId>/.
 // On Railway, DATA_DIR should point at a mounted volume (e.g. /data).
-import { appendFile, mkdir, open, readFile, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, open, readFile, rename, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 export type LogName = "events" | "comms" | "world" | string; // string allows "thoughts/<pet>"
@@ -46,7 +46,11 @@ export class Store {
   }
 
   async writeJson(file: string, value: unknown): Promise<void> {
-    await writeFile(path.join(this.dir, file), JSON.stringify(value, null, 2));
+    // Write to a temp file and rename, so a crash or kill mid-write never leaves a truncated file behind.
+    const target = path.join(this.dir, file);
+    const tmp = `${target}.${process.pid}.tmp`;
+    await writeFile(tmp, JSON.stringify(value, null, 2));
+    await rename(tmp, target);
   }
 
   async readJson<T>(file: string): Promise<T | null> {

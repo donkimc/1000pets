@@ -6,9 +6,11 @@ import type { PetState } from "./pet.js";
 
 export const PET_VOICE_RANGE = 300;
 export const HUMAN_VOICE_RANGE = 350;
+export const TEACHER_VOICE_RANGE = 350;
+const CLOSE_VOICE = 150; // centre-to-centre distance at which a speaker counts as right beside the listener
 
-export interface Speaker { kind: "pet" | "human"; id: string; name: string; x: number; y: number }
-export type Target = { kind: "pet"; id: string } | { kind: "all" } | { kind: "nearest" } | { kind: "human" };
+export interface Speaker { kind: "pet" | "human" | "teacher"; id: string; name: string; x: number; y: number }
+export type Target = { kind: "pet"; id: string } | { kind: "all" } | { kind: "nearest" } | { kind: "human" } | { kind: "teacher" };
 
 export interface Utterance {
   id: string;
@@ -17,8 +19,8 @@ export interface Utterance {
   hour: number;
   minute: number;
   second: number;
-  from: { kind: "pet" | "human"; id: string; name: string };
-  to: { kind: "pet" | "all" | "nearest" | "human"; id?: string; name?: string };
+  from: { kind: "pet" | "human" | "teacher"; id: string; name: string };
+  to: { kind: "pet" | "all" | "nearest" | "human" | "teacher"; id?: string; name?: string };
   text: string;
   heardBy: string[]; // pet ids that were within earshot
   notHeardBy: string[]; // addressed pets that were too far away
@@ -39,7 +41,11 @@ export function describeSource(listener: PetState, speaker: Speaker): string {
   const bearing = normAngle(Math.atan2(dy, dx) - listener.heading);
   const side = Math.abs(bearing) < 0.4 ? "ahead" : Math.abs(bearing) > 2.3 ? "behind me" : bearing > 0 ? "to my right" : "to my left";
   const visible = Math.abs(bearing) <= VISION_HALF_ANGLE && dist <= VISION_RANGE;
-  return `a voice ${side}, about ${Math.round(dist / 10) * 10} away${visible ? " (I can see the moving thing it came from)" : " (I cannot see who it is)"}`;
+  // Someone right next to the listener is not "unseen" just because they are outside the vision cone.
+  const close = dist <= CLOSE_VOICE;
+  const where = close ? `very close, ${side}` : `${side}, about ${Math.round(dist / 10) * 10} away`;
+  if (speaker.kind === "teacher") return `the Teacher (${where}${visible ? "" : close ? ", right next to me though I am not facing them" : ", out of sight"})`;
+  return `a voice ${where}${visible ? " (I can see the moving thing it came from)" : close ? " (someone is right next to me, though I am not facing them)" : " (I cannot see who it is)"}`;
 }
 
 export interface GateInput {
@@ -71,4 +77,9 @@ export function canSpeak(g: GateInput): { ok: boolean; reason: string } {
   if (g.msSinceLastPetUtterance < GATE.globalPetGapMs) return { ok: false, reason: "another pet just spoke" };
   if (g.social + g.socialTrait * 0.3 < 0.45) return { ok: false, reason: "not in a talkative mood" };
   return { ok: true, reason: "has something to say and someone is near" };
+}
+
+/** True if a model's text is structured data (JSON, a fenced block, a field name) that must never be spoken aloud as if it were speech. */
+export function looksLikeJson(text: string): boolean {
+  return /^\s*(```|json\b|[{\[])/i.test(text) || /"(reply|understood|intent|topic|claims|thought|beliefs)"\s*:/.test(text);
 }

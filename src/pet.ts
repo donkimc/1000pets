@@ -1,4 +1,10 @@
 import { Rng } from "./rng.js";
+import type { Scene, SceneWatch } from "./scenes.js";
+import type { Cue, CueState } from "./cues.js";
+import type { Gist, SleepSummary } from "./sleep.js";
+import type { Dream } from "./dreams.js";
+import type { PredictState } from "./predict.js";
+import type { RuleState } from "./rules.js";
 
 export interface Traits { curiosity: number; social: number; caution: number; patience: number }
 export interface PetDef { id: string; name: string; color: string; traits: Traits; start?: { x: number; y: number } }
@@ -18,6 +24,9 @@ export interface S1State {
   tumbleUntil: number;
   lastThoughtSec: number;
   lastReason?: string; // why System 1 chose its current action
+  followedAt?: number; // sim seconds of the last tick spent following a tone
+  detourUntil?: number; // after steering round an obstacle, keep going straight until then instead of turning straight back
+  giveUpUntil?: number; // a tone attempt made no progress: explore instead until then
 }
 
 export interface PetState {
@@ -34,22 +43,29 @@ export interface PetState {
   mode: PetMode;
   drives: Drives;
   bumped: boolean;
-  touch: "wall" | "object" | "pet" | "human" | "pad" | null;
+  touch: "wall" | "object" | "pet" | "human" | "teacher" | "pad" | null;
   chargeRate: number; // %/min being taken in right now (solar or charger)
   lastPetSeenSec: number;
   rngState: number;
   s1: S1State;
   mind: Mind;
   stats: PetStats;
+  odo: { x: number; y: number }; // dead-reckoned position in the pet's own frame, starting at (0,0) where it woke up; never world coordinates
+  watch?: SceneWatch; // running averages used to notice surprises
+  cueState?: CueState; // charge edge detection and the tone currently being followed
+  predict?: PredictState; // what it has learned to expect, and what has surprised it (see predict.ts)
+  rules?: RuleState; // habits it has tuned, and the trial in progress (see rules.ts)
+  sleep?: { since: number | null; done: boolean }; // the current sleep, and whether it has been consolidated yet
+  brainTraits?: boolean; // traits (and name/colour) came from a restored brain, so config/pets.json must not overwrite them
 }
 
-export type Suggestion = "none" | "seek_light" | "find_pet" | "inspect_object" | "rest";
-export const SUGGESTIONS: readonly Suggestion[] = ["none", "seek_light", "find_pet", "inspect_object", "rest"];
+export type Suggestion = "none" | "seek_light" | "find_pet" | "inspect_object" | "rest" | "follow_tone";
+export const SUGGESTIONS: readonly Suggestion[] = ["none", "seek_light", "find_pet", "inspect_object", "rest", "follow_tone"];
 
 /** Something another voice asserted. Speech is a claim, not a fact, until the pet verifies it itself. */
-export interface Claim { text: string; from: string; tSec: number; status: "unverified" | "supported" | "contradicted" }
+export interface Claim { text: string; from: string; tSec: number; status: "unverified" | "supported" | "contradicted"; why?: string; checkedSec?: number } // why: what the pet's own experience showed
 
-export interface Belief { text: string; confidence: number; updatedSec: number }
+export interface Belief { text: string; confidence: number; updatedSec: number; checkedSec?: number; verdict?: "supported" | "contradicted"; why?: string } // checkedSec: evidence up to here has already been counted
 
 /** Slow, deliberate state owned by System 2: beliefs, the current question, a long-running intention. */
 export interface Mind {
@@ -59,12 +75,23 @@ export interface Mind {
   suggestion: { kind: Suggestion; untilSec: number } | null;
   claims: Claim[]; // things heard from others, newest last
   episodes: string[]; // short notes of recent experience, newest last
-  sensed: { light: number; temperature: number; seen: string[]; heard: string; touch: string };
+  scenes: Scene[]; // salient moments kept as small structured pictures (see scenes.ts)
+  cues: Record<string, Cue>; // what the pet has learned about steady tones, from counted evidence (see cues.ts)
+  gists: Gist[]; // patterns written up while asleep (see sleep.ts): provisional, each linked to the moments it came from
+  gistDue: boolean; // a night's consolidation has finished and a gist could be written
+  lastSleep: SleepSummary | null; // what the last night's consolidation did, for the dashboard
+  lastGistSec?: number; // when a gist was last asked for, so it is not every sleep
+  refuted: { text: string; why: string; tSec: number }[]; // things it believed or was told that its own experience showed to be wrong
+  recentQuestions: string[]; // what it asked itself lately, so it can be told to ask something new
+  recentThoughts: string[]; // its last few thoughts, shown back to it in a deep reflection
+  repeatStreak: number; // how many slow thoughts in a row asked a question it had already asked
+  dreams: Dream[]; // remembered as dreams: kept apart from beliefs, claims, moments and gists, and never treated as fact
+  sensed: { light: number; temperature: number; seen: string[]; near: string[]; heard: string; tone: string; touch: string };
   lastThoughtSec: number;
 }
 
 export function newMind(): Mind {
-  return { beliefs: [], question: "", intention: null, suggestion: null, claims: [], episodes: [], sensed: { light: 0, temperature: 0, seen: [], heard: "", touch: "" }, lastThoughtSec: -1e9 };
+  return { beliefs: [], question: "", intention: null, suggestion: null, claims: [], episodes: [], scenes: [], cues: {}, gists: [], gistDue: false, lastSleep: null, refuted: [], recentQuestions: [], recentThoughts: [], repeatStreak: 0, dreams: [], sensed: { light: 0, temperature: 0, seen: [], near: [], heard: "", tone: "", touch: "" }, lastThoughtSec: -1e9 };
 }
 
 /** Running counters per pet, shown on the dashboard. */
@@ -85,6 +112,7 @@ export const PET_PALETTE = ["#3987e5", "#d95926", "#199e70", "#c98500", "#d55181
 
 export const PET_RADIUS = 18;
 export const HUMAN_RADIUS = 16;
+export const TEACHER_RADIUS = 18;
 
 /** The human participant: another body in the world, driven by the person using the site. */
 export interface HumanState { x: number; y: number; heading: number; moving: boolean }
@@ -115,6 +143,7 @@ export function spawnPet(def: PetDef, seed: number, index: number): PetState {
     touch: null,
     chargeRate: 0,
     lastPetSeenSec: -1e9,
+    odo: { x: 0, y: 0 },
     rngState: rng.state,
     mind: newMind(),
     stats: newStats(),
