@@ -15,6 +15,7 @@ import type { PetState } from "./pet.js";
 import { describeCues } from "./cues.js";
 import { addRefuted, checkStatement, conflicts, duplicates } from "./verify.js";
 import { describeScene, sceneScore, type Scene } from "./scenes.js";
+import { creditClaim } from "./relations.js";
 import type { Simulation } from "./sim.js";
 import type { Store } from "./store.js";
 
@@ -189,6 +190,7 @@ export function verifyClaims(p: Pick<PetState, "mind" | "predict">, now = 0): { 
     // Anything else (an instruction, a feeling, a loose remark, a claim a small model made up) stays unverified: matching a keyword
     // to some moment that happened to follow proves nothing, and used to mark meaningless things "supported".
   }
+  for (const c of p.mind.claims) creditClaim(p.mind, c); // who told it counts as right or wrong once, and again if the verdict flips
   return { supported, contradicted };
 }
 

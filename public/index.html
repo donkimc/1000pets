@@ -6,6 +6,13 @@
 <meta name="theme-color" content="#101418">
 <title>1000pets</title>
 <link rel="stylesheet" href="/app.css">
+<style>
+  #view3d-wrap.fs { position: fixed; inset: 0; z-index: 60; margin: 0; border-radius: 0; padding: 8px; display: flex; flex-direction: column; background: #0b0f14; }
+  #view3d-wrap.fs #view3d-stage { flex: 1; min-height: 0; }
+  #view3d-wrap.fs #view3d { height: 100%; aspect-ratio: auto !important; }
+  #minimap.big { left: 50% !important; bottom: 50% !important; transform: translate(-50%, 50%); width: min(92%, 160vh) !important; z-index: 5; background: rgba(0,0,0,0.85); }
+  @media (min-width: 1100px) { body { max-width: 72rem; } [data-tab="live"] { display: grid; grid-template-columns: 1.35fr 1fr; gap: 0 12px; align-items: start; } [data-tab="live"].hidden { display: none; } #view3d-wrap { grid-column: 1; grid-row: 1 / span 3; } }
+</style>
 </head>
 <body class="bg-ink text-slate-100 font-sans antialiased p-4 pb-10 max-w-xl mx-auto">
 <h1 class="text-xl font-semibold mb-3">1000pets</h1>
@@ -28,15 +35,33 @@
   <button id="pause" class="mt-2 w-full py-3 rounded-lg bg-slate-700 active:bg-slate-600">Pause</button>
 </section>
 
-<section class="bg-panel rounded-xl p-4 mb-3">
-  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Room</h2>
-  <canvas id="map" width="1000" height="700" class="w-full h-auto block rounded-lg bg-black"></canvas>
-  <div class="mt-3 flex items-center justify-between gap-4">
-    <div class="text-sm text-mute">Move yourself (the white diamond). Pets can see and bump into you. Use WASD or arrow keys on a computer.</div>
-    <div id="pad" class="relative shrink-0 w-32 h-32 rounded-full bg-slate-700/60 border border-line select-none" style="touch-action:none">
-      <div id="knob" class="absolute w-12 h-12 rounded-full bg-accent/80" style="left:40px;top:40px"></div>
+<section id="view3d-wrap" class="bg-panel rounded-xl p-3 mb-3">
+  <div class="flex flex-wrap items-center gap-2 mb-2" id="view3d-bar">
+    <div id="view-modes" class="flex gap-1 text-xs">
+      <button data-mode="walk" class="px-2 py-1.5 rounded-lg bg-slate-700">Walk</button>
+      <button data-mode="top" class="px-2 py-1.5 rounded-lg bg-slate-700">Top</button>
+      <button data-mode="follow" class="px-2 py-1.5 rounded-lg bg-slate-700">Follow</button>
+      <button data-mode="pet" class="px-2 py-1.5 rounded-lg bg-slate-700">Pet's eyes</button>
     </div>
+    <select id="view-pet" class="bg-slate-700 rounded-lg px-2 py-1.5 text-xs"></select>
+    <button id="view-fs" class="ml-auto px-2 py-1.5 rounded-lg bg-slate-700 text-xs">Full screen</button>
   </div>
+  <div class="relative" id="view3d-stage">
+    <canvas id="view3d" class="w-full block rounded-lg bg-black" style="aspect-ratio:4/3;touch-action:none"></canvas>
+    <canvas id="minimap" width="400" height="280" class="absolute left-2 bottom-2 rounded-md border border-line bg-black/60 cursor-pointer" style="width:34%;touch-action:none"></canvas>
+    <button id="mm-big" class="absolute right-2 top-2 px-2 py-1 rounded bg-slate-800/80 text-xs" title="Bigger map">⤢ map</button>
+    <div id="pad" class="absolute right-3 bottom-3 w-28 h-28 rounded-full bg-slate-700/50 border border-line select-none" style="touch-action:none">
+      <div id="knob" class="absolute w-10 h-10 rounded-full bg-accent/80" style="left:34px;top:34px"></div>
+    </div>
+    <button id="ptt3d" class="absolute left-1/2 -translate-x-1/2 bottom-3 px-4 py-2 rounded-full bg-slate-800/80 text-sm select-none" style="touch-action:none">🎙 hold</button>
+    <div id="view-note" class="absolute left-2 top-2 text-xs text-white/80 bg-black/40 rounded px-1.5 py-0.5 pointer-events-none"></div>
+  </div>
+  <div class="text-xs text-mute mt-2">Walk: drag to look, stick or WASD to move (Q/E or ← → to turn). Tap the minimap or the map below to walk there. Doors open as you reach them.</div>
+</section>
+
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Map <span class="normal-case">(tap it to walk there)</span></h2>
+  <canvas id="map" width="1000" height="700" class="w-full h-auto block rounded-lg bg-black cursor-pointer"></canvas>
 </section>
 
 <section class="bg-panel rounded-xl p-4 mb-3">
@@ -59,6 +84,20 @@
   <div id="chatnote" class="text-xs text-mute mt-1 min-h-4"></div>
 </section>
 
+<section class="bg-panel rounded-xl p-4 mb-3">
+  <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Voice <span class="normal-case">(everything runs in your browser)</span></h2>
+  <div class="flex flex-wrap items-center gap-2">
+    <button id="voice-on" class="px-3 py-2 rounded-lg bg-slate-700 text-sm">Voices off</button>
+    <select id="voice-engine" class="bg-slate-700 rounded-lg px-2 py-2 text-sm"><option value="auto">Best available</option><option value="kokoro">Kokoro only</option><option value="browser">Browser voice only</option></select>
+    <label class="flex items-center gap-1 text-xs text-mute">Volume <input id="voice-volume" type="range" min="0.1" max="1" step="0.05" class="accent-emerald-400 w-24"></label>
+    <label class="flex items-center gap-1 text-xs text-mute"><input id="voice-everyone" type="checkbox"> Hear everyone, even far away</label>
+    <label class="flex items-center gap-1 text-xs text-mute" title="Faster where it works. It is checked, and if the sound comes out garbled the processor is used instead."><input id="voice-gpu" type="checkbox"> Use the graphics chip (experimental)</label>
+  </div>
+  <button id="ptt" class="mt-3 w-full py-5 rounded-xl bg-slate-700 text-base font-semibold select-none" style="touch-action:none">🎙 Hold to talk <span class="text-xs font-normal text-mute">(or hold the space bar)</span></button>
+  <div class="text-xs text-mute mt-2">Like a walkie-talkie: hold, speak, let go. Start with a pet's name to talk to that pet (“Pip, where is the charger?”). Pets and the Teacher each have their own voice, and you only hear those near you; a pet answering you from far away comes over the radio.</div>
+  <div id="voice-note" class="text-xs text-mute mt-1 min-h-4"></div>
+</section>
+
 </div>
 
 <div data-tab="pets" class="hidden">
@@ -75,7 +114,9 @@
 <section class="bg-panel rounded-xl p-4 mb-3">
   <div class="flex items-center justify-between mb-2"><h2 class="text-xs uppercase tracking-wider text-mute">Set the environment</h2><button id="env-release" class="text-xs px-3 py-1.5 rounded-lg bg-slate-700 active:bg-slate-600">Release all to auto</button></div>
   <p class="text-xs text-mute mb-3">Set a value and it stays pinned (📌) until you press Auto, which hands it back to the normal daily schedule. The Teacher can change these too.</p>
+  <div id="env-scope" class="mb-3 hidden"></div>
   <div id="env-controls" class="space-y-2"></div>
+  <div id="env-doors" class="mt-4 hidden"></div>
   <div id="env-note" class="text-xs text-mute mt-2 min-h-4"></div>
 </section>
 <section class="bg-panel rounded-xl p-4 mb-3">
@@ -198,7 +239,8 @@ function render() {
     b.classList.toggle("bg-accent", on); b.classList.toggle("text-emerald-950", on);
     b.classList.toggle("font-semibold", on); b.classList.toggle("bg-slate-700", !on);
   });
-  if (state.env) { renderEnv(state.env); drawMap(); }
+  if (state.env) { renderEnv(state.env); drawMap(); drawMap($("minimap")); }
+  if (window.world3d && layout) window.world3d.update({ ...state, layout });
   if (state.pets) { renderPets(state.pets); fillTargets(); }
 }
 
@@ -243,6 +285,8 @@ async function loadThoughts(id) {
       `<button data-reset-rules="${id}" class="mt-1 text-xs px-2 py-1 rounded bg-slate-700 active:bg-slate-600">Reset its habits</button>` : "") +
     `<div class="text-mute mt-2">What it was told <span class="text-xs">(checked against what it has experienced)</span></div>` +
     ((m.claims || []).length ? m.claims.slice(-5).map((c) => `<div>• ${esc(c.text)} <span class="${c.status === "contradicted" ? "text-amber-300" : c.status === "supported" ? "text-accent" : "text-mute"}">${esc(c.status)}${c.why && c.status !== "unverified" ? ": " + esc(c.why) : ""}</span></div>`).join("") : "<div class='text-mute'>nothing yet</div>") +
+    `<div class="text-mute mt-2">Who it knows <span class="text-xs">(it tells them apart by how they look and rates them by company and by whether what they said held up)</span></div>` +
+    ((m.others || []).length ? m.others.map((o) => `<div>• ${esc(o.label)}${o.actually ? ` <span class="text-mute">(really ${esc(o.actually)})</span>` : ""}: ${o.minutes} min seen, ${o.known ? (o.affinity > 0.25 ? "good company" : o.affinity < -0.1 ? "not good company" : "company so-so") : "barely known"}${o.bumps ? `, ${o.bumps} bumps` : ""}${o.told ? `, <span class="${o.trust >= 0.65 ? "text-accent" : o.trust <= 0.35 ? "text-amber-300" : ""}">${o.right} of ${o.told} told held up</span>` : ""}</div>`).join("") : "<div class='text-mute'>nobody yet</div>") +
     ((m.refuted || []).length ? `<div class="text-mute mt-2">Found to be wrong <span class="text-xs">(it will not take these up again for a day)</span></div>` + m.refuted.slice(0, 3).map((r) => `<div>• ${esc(r.text)} <span class="text-mute">— ${esc(r.why)}</span></div>`).join("") : "") +
     (m.predict ? `<div class="text-mute mt-2">What surprised it <span class="text-xs">(expectations it learned from experience, and where reality broke them)</span></div><div class="text-xs">recent surprise level ${(m.predict.level * 100).toFixed(1)}%${Object.entries(m.predict.byChannel).map(([k, v]) => ` · ${esc(k)} ${(v * 100).toFixed(1)}%`).join("")}</div>` + (m.predict.recent.length ? m.predict.recent.slice(0, 4).map((s) => `<div>• ${esc(s.why)} <span class="text-mute">(${Math.round(s.score * 100)}%)</span></div>`).join("") : "<div class='text-mute'>nothing unexpected yet</div>") : "") +
     `<div class="text-mute mt-2">Dreams <span class="text-xs">(remembered as dreams: none of it happened, and it is kept apart from what it believes)</span></div>` +
@@ -253,7 +297,7 @@ async function loadThoughts(id) {
     `<div class="text-mute mt-2">Steady tones <span class="text-xs">(what it has worked out, from counts)</span></div>` +
     ((m.cues || []).length ? m.cues.map((c) => `<div>• ${c.pitch} Hz · heard ${c.minutes} min · charged after reaching it ${c.support}× · failed ${c.contra}× · <span class="${c.trusted ? "text-accent" : "text-mute"}">${c.trusted ? "trusts it" : c.tentative ? "suspects it" : "unsure"}</span></div>`).join("") : "<div class='text-mute'>none heard yet</div>") +
     `<div class="text-mute mt-2">Memorable moments <span class="text-xs">(view: left to right across its sight, then front/right/back/left around it; . empty, o small, # large, @ moving)</span></div>` +
-    ((m.scenes || []).length ? m.scenes.map((s) => `<div class="mt-1 rounded bg-ink/60 p-1.5"><div><span class="text-mute tabular-nums">${esc(s.when)}</span> ${esc(s.why)} <span class="text-mute">· importance ${Math.round(s.importance * 100)}% · used ${s.uses}×</span></div><div class="font-mono text-teal-300 tracking-wider">${esc(s.view)}</div></div>`).join("") : "<div class='text-mute'>none yet</div>");
+    ((m.scenes || []).length ? m.scenes.map((s) => `<div class="mt-1 rounded bg-ink/60 p-1.5"><div><span class="text-mute tabular-nums">${esc(s.when)}</span> ${esc(s.why)} <span class="text-mute">· importance ${Math.round(s.importance * 100)}% · used ${s.uses}×</span></div><div class="flex gap-3 items-start"><div class="font-mono text-teal-300 tracking-wider">${esc(s.view)}</div>${s.grid ? `<pre class="font-mono text-xs leading-[0.95] text-amber-200 m-0" title="its own top-down map of the ground around it, ahead is up: # wall, o furniture, D shut door, : open doorway, @ another body, ^ itself">${esc(s.grid.join("\n"))}</pre>` : ""}</div></div>`).join("") : "<div class='text-mute'>none yet</div>");
   ul.innerHTML = list.reverse().map((t) => {
     const when = `<span class="text-mute tabular-nums">D${t.day} ${pad(t.hour)}:${pad(t.minute)}:${pad(Math.floor(t.tSec % 60))}</span>`;
     if (t.system === 2) return `<li class="py-1 border-b border-line">${when} <span class="text-violet-400">S2${t.deep ? " deep" : ""}</span> ${esc(t.thought)} <span class="text-mute">— ${esc(t.question)} · ${t.provider}</span></li>`;
@@ -286,38 +330,81 @@ loadLlm(); setInterval(loadLlm, 10000);
 function renderEnv(e) {
   const rows = [
     ["Weather", e.weather], ["Sun", Math.round(e.sunIntensity * 100) + "%"],
-    ["Outdoor", e.outdoorTemp.toFixed(1) + " °C"], ["Indoor", e.indoorTemp.toFixed(1) + " °C"],
-    ["Curtain", e.curtainOpen ? "open" : "closed"], ["Door", e.doorOpen ? "open" : "closed"],
-    ["Lamp", e.lampOn ? "on" : "off"], ["Heater", e.heaterOn ? "on" : "off"], ["Charger hum", e.beaconOn === false ? "off" : "on"],
+    ["Outdoor", e.outdoorTemp.toFixed(1) + " °C"], ["Front door", e.doorOpen ? "open" : "closed"], ["Charger hum", e.beaconOn === false ? "off" : "on"],
   ];
-  $("env").innerHTML = rows.map(([k, v]) => `<div><div class="text-xs text-mute">${k}</div><div class="text-base font-semibold">${v}</div></div>`).join("");
+  const rooms = state && state.rooms || [];
+  let html = rows.map(([k, v]) => `<div><div class="text-xs text-mute">${k}</div><div class="text-base font-semibold">${v}</div></div>`).join("");
+  if (rooms.length > 1) {
+    html += `<div class="col-span-2 mt-1 overflow-x-auto"><table class="w-full text-sm"><tr class="text-xs text-mute text-left"><th>Room</th><th>°C</th><th>Curtain</th><th>Lamp</th><th>Heater</th></tr>` +
+      rooms.map((r) => `<tr><td class="pr-2">${r.name}</td><td>${r.indoorTemp.toFixed(1)}</td><td>${r.curtainOpen ? "open" : "closed"}</td><td>${r.lampOn ? "on" : "off"}</td><td>${r.heaterOn ? "on" : "off"}</td></tr>`).join("") + `</table></div>`;
+    const doors = state.doors || [];
+    html += `<div class="col-span-2 text-xs text-mute">Doors: ${doors.map((d) => `${d.a}↔${d.b} ${d.locked ? "locked" : d.open ? "open" : "shut"}`).join(" · ")}</div>`;
+  } else {
+    html += [["Indoor", e.indoorTemp.toFixed(1) + " °C"], ["Curtain", e.curtainOpen ? "open" : "closed"], ["Lamp", e.lampOn ? "on" : "off"], ["Heater", e.heaterOn ? "on" : "off"]].map(([k, v]) => `<div><div class="text-xs text-mute">${k}</div><div class="text-base font-semibold">${v}</div></div>`).join("");
+  }
+  $("env").innerHTML = html;
 }
 
-function drawMap() {
+const FLOORS = { wood: "#3a3128", tile: "#34404a", carpet: "#3b3350", stone: "#363a3f" };
+const roomEnvOf = (id) => (state.rooms || []).find((r) => r.id === id) || {};
+
+function drawMap(c = $("map")) {
   if (!layout || !state.env) return;
-  const c = $("map"), g = c.getContext("2d"), e = state.env;
-  const dark = 1 - Math.min(1, 0.4 + e.sunIntensity * 0.8 + (e.lampOn ? 0.25 : 0));
-  g.clearRect(0, 0, c.width, c.height);
-  g.fillStyle = "#2a2f36"; g.fillRect(0, 0, c.width, c.height);
-  // sun patch
-  if (e.curtainOpen && e.sunIntensity > 0 && state.sunPatch) {
-    const p = state.sunPatch, grad = g.createRadialGradient(p.x, p.y, 10, p.x, p.y, p.r);
+  const g = c.getContext("2d"), e = state.env;
+  const W = layout.width || 1000, H = layout.height || 700;
+  if (c.dataset.w !== String(W)) { c.dataset.w = String(W); c.width = 1000; c.height = Math.round(1000 * H / W); }
+  const k = c.width / W;
+  g.setTransform(k, 0, 0, k, 0, 0);
+  g.clearRect(0, 0, W, H);
+  g.fillStyle = "#101418"; g.fillRect(0, 0, W, H);
+  const rooms = layout.rooms || [{ id: "main", x: 0, y: 0, w: W, h: H, floor: "wood", name: "Room" }];
+  const doors = layout.doors || [];
+  const doorState = Object.fromEntries((state.doors || []).map((d) => [d.id, d]));
+  for (const r of rooms) { g.fillStyle = FLOORS[r.floor] || "#2a2f36"; g.fillRect(r.x, r.y, r.w, r.h); }
+  // sun patches
+  for (const r of rooms) {
+    const re = rooms.length > 1 ? roomEnvOf(r.id) : e;
+    if (!re.curtainOpen || e.sunIntensity <= 0) continue;
+    const p = rooms.length > 1 ? (state.sunPatches || {})[r.id] : state.sunPatch; if (!p) continue;
+    g.save(); g.beginPath(); g.rect(r.x, r.y, r.w, r.h); g.clip();
+    const grad = g.createRadialGradient(p.x, p.y, 10, p.x, p.y, p.r);
     grad.addColorStop(0, `rgba(255,224,130,${0.55 * e.sunIntensity})`); grad.addColorStop(1, "rgba(255,224,130,0)");
-    g.fillStyle = grad; g.fillRect(0, 0, c.width, c.height);
+    g.fillStyle = grad; g.fillRect(r.x, r.y, r.w, r.h); g.restore();
   }
-  const colors = { window: e.curtainOpen ? "#9fd4ff" : "#4a5563", door: e.doorOpen ? "#2b2b2b" : "#8b5e3c", plant: "#4caf50",
-    table: "#7a5c3a", bed: "#5d6fa8", charger: "#e0c341", heater: e.heaterOn ? "#e8693c" : "#555", lamp: e.lampOn ? "#fff3a0" : "#777" };
+  const objRoom = (o) => o.room || rooms[0].id;
+  const colorOf = (o) => {
+    const re = rooms.length > 1 ? roomEnvOf(objRoom(o)) : e;
+    return ({ window: re.curtainOpen ? "#9fd4ff" : "#4a5563", door: e.doorOpen ? "#2b2b2b" : "#8b5e3c", plant: "#4caf50", table: "#7a5c3a", bed: "#5d6fa8", charger: "#e0c341",
+      heater: re.heaterOn ? "#e8693c" : "#555", lamp: re.lampOn ? "#fff3a0" : "#777", sofa: "#a0526b", shelf: "#6b4a2b", counter: "#8e9aa5", fridge: "#cfd8dc", desk: "#8a6a45", wardrobe: "#5a4632", rug: "#7a3d3d" })[o.kind] || "#999";
+  };
   for (const o of layout.objects) {
-    g.fillStyle = colors[o.kind] || "#999";
+    g.fillStyle = colorOf(o);
+    if (o.kind === "rug") g.globalAlpha = 0.55;
     if (o.kind === "plant" || o.kind === "lamp") { g.beginPath(); g.arc(o.x, o.y, o.w / 2, 0, 7); g.fill(); }
     else g.fillRect(o.x, o.y, o.w, o.h);
-    g.fillStyle = "#cfd6dd"; g.font = "22px system-ui"; g.fillText(o.kind, o.x - (o.kind==="plant"||o.kind==="lamp"?o.w/2:0), o.y + (o.y > 600 ? -8 : o.h + 22 + (o.kind==="plant"||o.kind==="lamp"?o.w/2:0)));
+    g.globalAlpha = 1;
   }
-  // the charger's hum: faint rings that drift outward (drawn only while it is on)
+  // walls and doors
+  g.fillStyle = "#c9d1d9";
+  for (const w of layout.walls || []) g.fillRect(w.x, w.y, w.w, w.h);
+  g.strokeStyle = "#c9d1d9"; g.lineWidth = 8; g.strokeRect(4, 4, W - 8, H - 8);
+  for (const d of doors) {
+    const r = layout.doorRects[d.id], st = doorState[d.id] || {};
+    g.fillStyle = st.open ? "rgba(255,255,255,0.12)" : "#8b5e3c";
+    g.fillRect(r.x - (d.orient === "v" ? 2 : 0), r.y - (d.orient === "h" ? 2 : 0), r.w + (d.orient === "v" ? 4 : 0), r.h + (d.orient === "h" ? 4 : 0));
+    if (st.locked) { g.fillStyle = "#fbbf24"; g.beginPath(); g.arc(r.x + r.w / 2, r.y + r.h / 2, 11, 0, 7); g.fill(); }
+  }
+  // labels
+  g.fillStyle = "rgba(207,214,221,0.75)"; g.font = "bold 34px system-ui";
+  if (rooms.length > 1) for (const r of rooms) g.fillText(r.name, r.x + 24, r.y + r.h - 22);
+  // each charger's hum: faint rings that drift outward (drawn only while it is on)
   if (e.beaconOn !== false) {
-    const ch = layout.objects.find((o) => o.kind === "charger"), cx = ch.x + ch.w / 2, cy = ch.y + ch.h / 2, ph = (Date.now() / 2400) % 1;
-    g.save(); g.lineWidth = 2;
-    for (let i = 0; i < 3; i++) { const f = (ph + i / 3) % 1; g.strokeStyle = `rgba(250,204,21,${0.35 * (1 - f)})`; g.beginPath(); g.arc(cx, cy, 30 + f * 240, 0, 7); g.stroke(); }
+    const ph = (Date.now() / 2400) % 1;
+    g.save(); g.lineWidth = 3;
+    for (const ch of layout.objects.filter((o) => o.kind === "charger")) {
+      const cx = ch.x + ch.w / 2, cy = ch.y + ch.h / 2;
+      for (let i = 0; i < 3; i++) { const f = (ph + i / 3) % 1; g.strokeStyle = `rgba(250,204,21,${0.35 * (1 - f)})`; g.beginPath(); g.arc(cx, cy, 30 + f * 240, 0, 7); g.stroke(); }
+    }
     g.restore();
   }
   // pets
@@ -327,48 +414,67 @@ function drawMap() {
     g.fillStyle = p.color; g.beginPath(); g.arc(0, 0, 18, 0, 7); g.fill();
     g.rotate(p.heading); g.fillStyle = "#101418"; g.beginPath(); g.arc(11, 0, 4.5, 0, 7); g.fill();
     g.restore();
-    g.fillStyle = "#fff"; g.font = "bold 22px system-ui"; g.textAlign = "center";
-    g.fillText(p.name + (p.mode === "sleeping" ? " zz" : ""), p.x, p.y - 26); g.textAlign = "start";
+    g.fillStyle = "#fff"; g.font = "bold 28px system-ui"; g.textAlign = "center";
+    g.fillText(p.name + (p.mode === "sleeping" ? " zz" : ""), p.x, p.y - 28); g.textAlign = "start";
   }
-  // human
+  // human, with the way they are facing
   if (state.human) {
     const h = state.human;
-    g.save(); g.translate(h.x, h.y); g.fillStyle = "#f8fafc";
-    g.beginPath(); g.moveTo(0, -20); g.lineTo(18, 0); g.lineTo(0, 20); g.lineTo(-18, 0); g.closePath(); g.fill(); g.restore();
-    g.fillStyle = "#fff"; g.font = "bold 22px system-ui"; g.textAlign = "center"; g.fillText("You", h.x, h.y - 28); g.textAlign = "start";
+    g.save(); g.translate(h.x, h.y); g.fillStyle = "#f8fafc"; g.rotate(h.heading);
+    g.beginPath(); g.moveTo(24, 0); g.lineTo(-14, -17); g.lineTo(-6, 0); g.lineTo(-14, 17); g.closePath(); g.fill(); g.restore();
+    g.fillStyle = "#fff"; g.font = "bold 28px system-ui"; g.textAlign = "center"; g.fillText("You", h.x, h.y - 30); g.textAlign = "start";
   }
-  // teacher
   if (state.teacher) {
     const t = state.teacher;
     g.save(); g.translate(t.x, t.y); g.fillStyle = "#2dd4bf";
     g.beginPath(); g.roundRect(-17, -17, 34, 34, 8); g.fill();
     g.rotate(t.heading); g.fillStyle = "#06201c"; g.beginPath(); g.arc(11, 0, 4.5, 0, 7); g.fill(); g.restore();
-    g.fillStyle = "#99f6e4"; g.font = "bold 22px system-ui"; g.textAlign = "center"; g.fillText("Teacher", t.x, t.y - 28); g.textAlign = "start";
+    g.fillStyle = "#99f6e4"; g.font = "bold 28px system-ui"; g.textAlign = "center"; g.fillText("Teacher", t.x, t.y - 28); g.textAlign = "start";
   }
-  // darkness overlay: night and no lights
-  g.fillStyle = `rgba(5,8,25,${0.65 * dark})`; g.fillRect(0, 0, c.width, c.height);
-  if (e.lampOn) {
-    const l = layout.objects.find((o) => o.kind === "lamp");
-    const grad = g.createRadialGradient(l.x, l.y, 5, l.x, l.y, 260);
-    grad.addColorStop(0, "rgba(255,240,170,0.45)"); grad.addColorStop(1, "rgba(255,240,170,0)");
-    g.fillStyle = grad; g.fillRect(0, 0, c.width, c.height);
+  // darkness per room: night, and no light on
+  for (const r of rooms) {
+    const re = rooms.length > 1 ? roomEnvOf(r.id) : e;
+    const hasWin = layout.objects.some((o) => objRoom(o) === r.id && o.kind === "window");
+    const dark = 1 - Math.min(1, 0.4 + (hasWin ? e.sunIntensity * 0.8 * (re.curtainOpen ? 1 : 0.25) : 0) + (re.lampOn ? 0.25 : 0));
+    g.fillStyle = `rgba(5,8,25,${0.65 * dark})`; g.fillRect(r.x, r.y, r.w, r.h);
+    if (re.lampOn) for (const l of layout.objects.filter((o) => objRoom(o) === r.id && o.kind === "lamp")) {
+      g.save(); g.beginPath(); g.rect(r.x, r.y, r.w, r.h); g.clip();
+      const grad = g.createRadialGradient(l.x, l.y, 5, l.x, l.y, 260);
+      grad.addColorStop(0, "rgba(255,240,170,0.45)"); grad.addColorStop(1, "rgba(255,240,170,0)");
+      g.fillStyle = grad; g.fillRect(r.x, r.y, r.w, r.h); g.restore();
+    }
   }
+  // walking route the human tapped
+  if (mapGoal) { g.strokeStyle = "rgba(255,255,255,0.8)"; g.lineWidth = 5; g.setLineDash([14, 10]); g.beginPath(); g.arc(mapGoal.x, mapGoal.y, 22, 0, 7); g.stroke(); g.setLineDash([]); }
   // speech bubbles
   const now = Date.now();
   for (const [id, b] of Object.entries(bubbles)) {
     if (b.until < now) { delete bubbles[id]; continue; }
     const pos = id === "human" ? state.human : id === "teacher" ? state.teacher : (state.pets || []).find((p) => p.id === id);
     if (!pos) continue;
-    g.font = "20px system-ui";
+    g.font = "26px system-ui";
     const words = b.text.split(" "), lines = []; let cur = "";
     for (const w of words) { if ((cur + " " + w).trim().length > 24) { lines.push(cur); cur = w; } else cur = (cur + " " + w).trim(); }
     if (cur) lines.push(cur);
-    const shown = lines.slice(0, 7), w = Math.max(...shown.map((l) => g.measureText(l).width)) + 20, h = shown.length * 24 + 14;
-    const bx = Math.max(4, Math.min(c.width - w - 4, pos.x - w / 2)), by = Math.max(4, pos.y - 52 - h);
-    g.fillStyle = "rgba(255,255,255,0.95)"; g.beginPath(); g.roundRect(bx, by, w, h, 10); g.fill();
-    g.fillStyle = "#101418"; shown.forEach((l, i) => g.fillText(l, bx + 10, by + 24 + i * 24));
+    const shown = lines.slice(0, 7), w = Math.max(...shown.map((l) => g.measureText(l).width)) + 24, h = shown.length * 32 + 16;
+    const bx = Math.max(4, Math.min(W - w - 4, pos.x - w / 2)), by = Math.max(4, pos.y - 60 - h);
+    g.fillStyle = "rgba(255,255,255,0.95)"; g.beginPath(); g.roundRect(bx, by, w, h, 12); g.fill();
+    g.fillStyle = "#101418"; shown.forEach((l, i) => g.fillText(l, bx + 12, by + 28 + i * 32));
   }
 }
+
+// Tapping the map walks you there, through the doors.
+let mapGoal = null;
+function mapToWorld(e, canvas) {
+  const r = canvas.getBoundingClientRect();
+  return { x: (e.clientX - r.left) / r.width * (layout.width || 1000), y: (e.clientY - r.top) / r.height * (layout.height || 700) };
+}
+function walkTo(pt) {
+  mapGoal = pt;
+  if (wsRef && wsRef.readyState === 1) wsRef.send(JSON.stringify({ type: "goto", x: pt.x, y: pt.y }));
+  setTimeout(() => { if (mapGoal === pt) mapGoal = null; }, 4000);
+}
+for (const id of ["map", "minimap"]) $(id).addEventListener("click", (e) => { if (layout) walkTo(mapToWorld(e, $(id))); });
 
 function addEvent(ev, prepend) {
   const li = document.createElement("li");
@@ -394,7 +500,7 @@ for (const s of SPEEDS) {
 $("pause").onclick = () => post("/api/pause", { paused: !(state && state.paused) });
 
 Promise.all([fetch("/api/status").then((r) => r.json()), fetch("/api/world").then((r) => r.json()), fetch("/api/events?limit=40").then((r) => r.json())])
-  .then(([s, w, evs]) => { layout = w; state = { ...s, env: w.env, sunPatch: w.sunPatch, pets: w.pets, human: w.human, teacher: w.teacher }; evs.reverse().forEach((e) => addEvent(e, false)); render(); });
+  .then(([s, w, evs]) => { layout = w.layout; state = { ...s, env: w.env, rooms: w.rooms, doors: w.doors, sunPatch: w.sunPatch, sunPatches: w.sunPatches, pets: w.pets, human: w.human, teacher: w.teacher }; evs.reverse().forEach((e) => addEvent(e, false)); render(); });
 
 const bubbles = {};
 const feed = $("feed"), seenIds = new Set();
@@ -420,6 +526,7 @@ function addUtterance(u, live) {
   el.querySelector("[data-why]").onclick = () => el.querySelector("[data-trace]").classList.toggle("hidden");
   feed.appendChild(el);
   while (feed.children.length > 80) feed.firstChild.remove();
+  if (live && window.voice) window.voice.onUtterance(u);
   if (live) { feed.scrollTop = feed.scrollHeight; bubbles[u.from.kind === "human" ? "human" : u.from.kind === "teacher" ? "teacher" : u.from.id] = { text: u.text, until: Date.now() + (teacherU ? 16000 : 9000) }; if (u.from.kind === "pet") $("chatnote").textContent = ""; }
 }
 
@@ -446,15 +553,30 @@ $("msg").addEventListener("keyup", (e) => e.stopPropagation());
 let wsRef = null;
 const joy = { dx: 0, dy: 0 }, keys = new Set();
 function sendInput() {
-  let dx = joy.dx, dy = joy.dy;
+  const w3 = window.world3d, walk = w3 && w3.view.mode === "walk";
+  let sx = joy.dx, fy = -joy.dy; // sideways (right +) and forward
   if (keys.size) {
-    dx = (keys.has("d") || keys.has("arrowright") ? 1 : 0) - (keys.has("a") || keys.has("arrowleft") ? 1 : 0);
-    dy = (keys.has("s") || keys.has("arrowdown") ? 1 : 0) - (keys.has("w") || keys.has("arrowup") ? 1 : 0);
+    sx = (keys.has("d") || (!walk && keys.has("arrowright")) ? 1 : 0) - (keys.has("a") || (!walk && keys.has("arrowleft")) ? 1 : 0);
+    fy = (keys.has("w") || keys.has("arrowup") ? 1 : 0) - (keys.has("s") || keys.has("arrowdown") ? 1 : 0);
   }
-  if (wsRef && wsRef.readyState === 1) wsRef.send(JSON.stringify({ type: "input", dx, dy }));
+  let dx = sx, dy = -fy, yaw;
+  if (walk) { // forward is the way you are looking
+    yaw = w3.yaw;
+    dx = fy * Math.cos(yaw) - sx * Math.sin(yaw);
+    dy = fy * Math.sin(yaw) + sx * Math.cos(yaw);
+  }
+  if (wsRef && wsRef.readyState === 1) wsRef.send(JSON.stringify({ type: "input", dx, dy, ...(yaw === undefined ? {} : { yaw }) }));
 }
-setInterval(() => { if (joy.dx || joy.dy || keys.size) sendInput(); }, 100);
-addEventListener("keydown", (e) => { if (e.target && e.target.tagName === "INPUT") return; const k = e.key.toLowerCase(); if ("wasd".includes(k) && k.length === 1 || k.startsWith("arrow")) { keys.add(k); e.preventDefault(); } });
+window.__sendInput = sendInput;
+setInterval(() => {
+  const w3 = window.world3d;
+  if (w3 && w3.view.mode === "walk") {
+    const turn = (keys.has("e") || keys.has("arrowright") ? 1 : 0) - (keys.has("q") || keys.has("arrowleft") ? 1 : 0);
+    if (turn) w3.look(turn * 0.2, 0);
+  }
+  if (joy.dx || joy.dy || keys.size) sendInput();
+}, 100);
+addEventListener("keydown", (e) => { if (e.target && e.target.tagName === "INPUT") return; const k = e.key.toLowerCase(); if ("wasdqe".includes(k) && k.length === 1 || k.startsWith("arrow")) { keys.add(k); e.preventDefault(); } });
 addEventListener("keyup", (e) => { keys.delete(e.key.toLowerCase()); sendInput(); });
 const joyPad = $("pad"), knob = $("knob");
 function padMove(e) {
@@ -462,12 +584,12 @@ function padMove(e) {
   let x = e.clientX - (r.left + R), y = e.clientY - (r.top + R);
   const len = Math.hypot(x, y), max = R - 24;
   if (len > max) { x = x / len * max; y = y / len * max; }
-  knob.style.left = (R - 24 + x) + "px"; knob.style.top = (R - 24 + y) + "px";
+  knob.style.left = (R - 20 + x) + "px"; knob.style.top = (R - 20 + y) + "px";
   joy.dx = x / max; joy.dy = y / max; sendInput();
 }
 joyPad.addEventListener("pointerdown", (e) => { joyPad.setPointerCapture(e.pointerId); padMove(e); });
 joyPad.addEventListener("pointermove", (e) => { if (joyPad.hasPointerCapture(e.pointerId)) padMove(e); });
-const padEnd = () => { joy.dx = joy.dy = 0; knob.style.left = "40px"; knob.style.top = "40px"; sendInput(); };
+const padEnd = () => { joy.dx = joy.dy = 0; knob.style.left = "34px"; knob.style.top = "34px"; sendInput(); };
 joyPad.addEventListener("pointerup", padEnd); joyPad.addEventListener("pointercancel", padEnd);
 
 function connect() {
@@ -484,7 +606,10 @@ function connect() {
 }
 connect();
 showTab(savedTab);
+window.__app = { get state() { return state; }, get layout() { return layout; }, bubbles, walkTo, mapToWorld };
 </script>
+<script type="module" src="/view.js"></script>
+<script type="module" src="/voice.js"></script>
 <script src="/dashboard.js"></script>
 <script src="/manage.js"></script>
 </body>

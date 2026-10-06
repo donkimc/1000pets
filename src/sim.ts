@@ -1,18 +1,21 @@
 // Simulation: advances the world and every pet in fixed 5-second chunks of simulated time,
 // so results do not depend on tick rate or clock speed.
 import { clamp, normAngle } from "./geometry.js";
-import { HUMAN_RADIUS, PET_PALETTE, PET_RADIUS, TEACHER_RADIUS, newMind, newStats, spawnPet, type HumanState, type PetDef, type PetState } from "./pet.js";
+import { HUMAN_RADIUS, PET_PALETTE, VOICES, PET_RADIUS, TEACHER_RADIUS, newMind, newStats, spawnPet, type HumanState, type PetDef, type PetState } from "./pet.js";
 import { Rng } from "./rng.js";
 import { sense, type NearThing, type Observation, type Sound } from "./sensors.js";
 import { decide, updateDrives, type Decision } from "./system1.js";
-import { captureSurpriseScene, updateOdometry, watchScenes } from "./scenes.js";
+import { captureSurpriseScene, closeLoop, updateOdometry, watchScenes } from "./scenes.js";
 import { takePeak, updatePredictions, type Surprise } from "./predict.js";
 import { tickRules, type RuleEvent } from "./rules.js";
 import { describeTone, toneKey, updateCues } from "./cues.js";
+import { observeOthers } from "./relations.js";
 import { sleepTick, type SleepSummary } from "./sleep.js";
 import { addDream, makeDream, type Dream } from "./dreams.js";
 import { cleanBeliefs } from "./system2.js";
-import { OBJECTS, ROOM, SOLIDS, centerOf, circleHitsShape, type World, type WorldEvent } from "./world.js";
+import { blockedAt, centerOf } from "./layout.js";
+import { findPath, type Pt } from "./nav.js";
+import type { World, WorldEvent } from "./world.js";
 
 const nearSide = (b: number) => (Math.abs(b) < 0.6 ? "in front of me" : Math.abs(b) > 2.5 ? "behind me" : b > 0 ? "on my right" : "on my left");
 /** How a pet perceives something within reach: what kind of thing, how close, and on which side. */
@@ -57,7 +60,7 @@ export interface SurpriseThought { system: 3; stage: "surprise"; pet: string; tS
 
 export interface StepResult { events: WorldEvent[]; thoughts: (Thought | SleepThought | DreamThought | SurpriseThought | HabitThought)[] }
 
-const SOUND_SOURCES: Record<string, string> = { footsteps: "door", knock: "door", car: "window", voices: "window" };
+const SOUND_SOURCES: Record<string, string> = { footsteps: "door", knock: "door", car: "window", voices: "window" }; // the kind of object each noise comes from
 // Pitches (Hz) sit on semitone-bin centres, so each kind of noise stays in its own bin; the beacon's is 534 Hz.
 const SOUND_PITCH: Record<string, number> = { car: 100, footsteps: 126, knock: 178, voices: 252 };
 
@@ -95,6 +98,7 @@ export class Simulation {
       // The config file is the source of truth for names, colours and traits of the default pets.
       const def = roster.find((d) => d.id === p.id);
       if (def && !p.brainTraits) Object.assign(p, { name: def.name, color: def.color, traits: def.traits });
+      p.voice = def?.voice ?? p.voice ?? VOICES[this.pets.indexOf(p) % VOICES.length]; // saves from before voices
     }
     this.human = snap?.human ? structuredClone(snap.human) : { x: 820, y: 620, heading: -Math.PI / 2, moving: false };
     this.ruleLearning = snap?.ruleLearning ?? false;
@@ -126,14 +130,32 @@ export class Simulation {
     return pet;
   }
 
-  /** Move the human by a joystick vector (each component -1..1) for dtSec of real time, sliding along obstacles. */
-  moveHuman(dx: number, dy: number, dtSec: number): void {
-    const len = Math.hypot(dx, dy);
+  private humanPath: Pt[] = [];
+
+  /** Walk the human to a spot, round walls and through doors (tapping the map). Returns false if there is no way there. */
+  setHumanGoal(x: number, y: number): boolean {
+    const path = findPath(this.world.layout, this.human, { x, y }, HUMAN_RADIUS + 4);
+    this.humanPath = path ?? [];
+    return !!path;
+  }
+
+  /** Move the human by a vector in world axes (each component -1..1) for dtSec of real time, sliding along obstacles. With no input, follow a tapped route if there is one. `yaw` turns the body to face a look direction, otherwise it faces the way it walks. */
+  moveHuman(dx: number, dy: number, dtSec: number, yaw?: number): void {
     const h = this.human;
     h.moving = false;
+    if (yaw !== undefined && Number.isFinite(yaw)) h.heading = yaw;
+    let len = Math.hypot(dx, dy);
+    let routed = false;
+    if (len >= 0.05) this.humanPath = []; // a hand on the controls takes over from a tapped route
+    else if (this.humanPath.length) {
+      const g = this.humanPath[0];
+      if (Math.hypot(g.x - h.x, g.y - h.y) < 14) { this.humanPath.shift(); return; }
+      dx = g.x - h.x; dy = g.y - h.y; len = Math.hypot(dx, dy); routed = true;
+    }
     if (len < 0.05 || !Number.isFinite(len)) return;
-    const f = Math.min(1, len) / len;
+    const f = (routed ? 1 : Math.min(1, len)) / len;
     const step = HUMAN_SPEED * dtSec;
+    this.autoOpen(h, HUMAN_RADIUS);
     const tryMove = (nx: number, ny: number) => {
       if (this.humanBlocked(nx, ny)) return false;
       h.x = nx;
@@ -145,33 +167,42 @@ export class Simulation {
     const movedY = tryMove(h.x, h.y + my);
     if (movedX || movedY) {
       h.moving = true;
-      h.heading = Math.atan2(dy, dx);
-    }
+      if (yaw === undefined) h.heading = Math.atan2(dy, dx);
+    } else if (routed) this.humanPath = []; // something is in the way: give up on the route
   }
 
   private humanBlocked(x: number, y: number): boolean {
-    if (x < HUMAN_RADIUS || y < HUMAN_RADIUS || x > ROOM.width - HUMAN_RADIUS || y > ROOM.height - HUMAN_RADIUS) return true;
-    if (SOLIDS.some((s) => circleHitsShape(x, y, HUMAN_RADIUS, s))) return true;
+    if (blockedAt(this.world.layout, x, y, HUMAN_RADIUS, this.world.shutDoors())) return true;
     if (Math.hypot(x - this.teacher.x, y - this.teacher.y) < TEACHER_RADIUS + HUMAN_RADIUS) return true;
     return this.pets.some((p) => Math.hypot(x - p.x, y - p.y) < PET_RADIUS + HUMAN_RADIUS);
   }
 
   private teacherBlocked(x: number, y: number): boolean {
-    if (x < TEACHER_RADIUS || y < TEACHER_RADIUS || x > ROOM.width - TEACHER_RADIUS || y > ROOM.height - TEACHER_RADIUS) return true;
-    if (SOLIDS.some((s) => circleHitsShape(x, y, TEACHER_RADIUS, s))) return true;
+    if (blockedAt(this.world.layout, x, y, TEACHER_RADIUS, this.world.shutDoors())) return true;
     if (Math.hypot(x - this.human.x, y - this.human.y) < TEACHER_RADIUS + HUMAN_RADIUS) return true;
     return this.pets.some((p) => Math.hypot(x - p.x, y - p.y) < PET_RADIUS + TEACHER_RADIUS);
   }
 
-  /** Walk the teacher toward its goal for dt simulated seconds, sliding along obstacles. Returns true once it has arrived. */
+  private teacherRoute: { key: string; pts: Pt[] } | null = null;
+
+  /** Walk the teacher toward its goal for dt simulated seconds, round walls and through doors (it knows the plan). Returns true once it has arrived. */
   private moveTeacher(dt: number): boolean {
     const t = this.teacher;
     const g = this.teacherGoal;
     t.moving = false;
-    if (!g) return true;
-    const dx = g.x - t.x, dy = g.y - t.y;
+    if (!g) { this.teacherRoute = null; return true; }
+    if (Math.hypot(g.x - t.x, g.y - t.y) < 12) return true;
+    const key = `${Math.round(g.x)},${Math.round(g.y)}`;
+    if (!this.teacherRoute || this.teacherRoute.key !== key) {
+      const pts = findPath(this.world.layout, t, g, TEACHER_RADIUS + 4);
+      this.teacherRoute = { key, pts: pts ?? [] };
+    }
+    const route = this.teacherRoute.pts;
+    while (route.length > 1 && Math.hypot(route[0].x - t.x, route[0].y - t.y) < 16) route.shift();
+    const wp = route[0] ?? g;
+    const dx = wp.x - t.x, dy = wp.y - t.y;
     const dist = Math.hypot(dx, dy);
-    if (dist < 12) return true;
+    if (dist < 1) return !route.length;
     const step = Math.min(dist, TEACHER_SPEED * dt);
     const mx = (dx / dist) * step, my = (dy / dist) * step;
     const ok = (nx: number, ny: number) => !this.teacherBlocked(nx, ny);
@@ -182,6 +213,7 @@ export class Simulation {
       if (ok(t.x, t.y + my)) { t.y += my; moved = true; }
     }
     if (moved) { t.moving = true; t.heading = Math.atan2(dy, dx); }
+    else this.teacherRoute = null; // stuck: plan again next time
     return false;
   }
 
@@ -195,16 +227,33 @@ export class Simulation {
         result.events.push(ev);
         this.recordSound(ev);
       }
+      this.autoOpen(this.teacher, TEACHER_RADIUS);
       this.moveTeacher(DT);
+      this.world.tickDoors(this.simSec, (id) => this.bodyInDoorway(id));
       for (const p of this.pets) this.tickPet(p, result);
     }
     this.sounds = this.sounds.filter((s) => this.simSec - s.tSec <= 240);
     return result;
   }
 
+  /** A person walking up to a shut door opens it. Pets have to push it deliberately (see act). */
+  private autoOpen(body: { x: number; y: number }, radius: number): void {
+    for (const id of this.world.shutDoors()) {
+      const r = this.world.layout.doorRects[id];
+      if (Math.hypot(body.x - Math.max(r.x, Math.min(body.x, r.x + r.w)), body.y - Math.max(r.y, Math.min(body.y, r.y + r.h))) < radius + 14) this.world.openDoor(id, this.simSec);
+    }
+  }
+
+  private bodyInDoorway(id: string): boolean {
+    const r = this.world.layout.doorRects[id];
+    const near = (b: { x: number; y: number }, rad: number) => Math.hypot(b.x - Math.max(r.x, Math.min(b.x, r.x + r.w)), b.y - Math.max(r.y, Math.min(b.y, r.y + r.h))) < rad + 10;
+    return near(this.human, HUMAN_RADIUS) || near(this.teacher, TEACHER_RADIUS) || this.pets.some((p) => near(p, PET_RADIUS));
+  }
+
   private recordSound(ev: WorldEvent) {
     if (ev.type !== "noise") return;
-    const src = OBJECTS.find((o) => o.id === (SOUND_SOURCES[ev.detail] ?? "window"))!;
+    const kind = SOUND_SOURCES[ev.detail] ?? "window";
+    const src = this.world.layout.objects.find((o) => o.kind === kind) ?? this.world.layout.objects[0];
     const c = centerOf(src);
     this.sounds.push({ tSec: this.simSec, x: c.x, y: c.y, volume: 0.7, pitch: SOUND_PITCH[ev.detail] ?? 150 });
   }
@@ -214,9 +263,11 @@ export class Simulation {
     const obs = sense(p, this.pets, this.world, this.sounds, this.simSec, rng, this.human, this.teacher);
     updateDrives(p, obs, DT, this.simSec);
     this.noteSensed(p, obs);
+    observeOthers(p, obs.vision, obs.touch ?? "", this.simSec, DT, p.drives.social);
     const decision = decide(p, obs, rng, this.simSec);
     this.act(p, decision, obs, out);
     updateOdometry(p, DT, rng);
+    closeLoop(p, obs);
     const surprises = [...updateCues(p, obs, this.simSec, DT), ...updatePredictions(p, obs, this.simSec)];
     for (const sur of surprises) captureSurpriseScene(p, obs, this.simSec, rng, sur); // a broken expectation is worth remembering
     watchScenes(p, obs, this.simSec, rng);
@@ -249,7 +300,7 @@ export class Simulation {
     m.sensed = {
       light: obs.light,
       temperature: obs.temperature,
-      seen: obs.vision.slice(0, 4).map((v) => `${v.category === "moving" ? "a moving thing" : "a still object"} (${v.size > 100 ? "large" : "small"}) ${side(v.bearing)}, ${Math.round(v.distance)} away`),
+      seen: obs.vision.slice(0, 4).map((v) => `${v.door ? (v.door === "shut" ? "a shut door" : "an open doorway") : `${v.category === "moving" ? "a moving thing" : "a still object"} (${v.size > 100 ? "large" : "small"})`} ${side(v.bearing)}, ${Math.round(v.distance)} away`),
       near: obs.near.slice(0, 4).map((n) => describeNear(n)),
       tone: obs.tone ? describeTone(obs.tone, p.mind.cues?.[toneKey(obs.tone)]?.lastVolume) : "",
       heard: obs.hearing ? `a sound ${side(obs.hearing.bearing)}, volume ${obs.hearing.volume}` : "",
@@ -260,6 +311,11 @@ export class Simulation {
     if (obs.touch === "teacher") this.note(p, "touched the Teacher");
     if (obs.touch === "pet") this.note(p, "bumped into another pet");
     if (obs.touch === "pad") this.note(p, "stood on the charging pad");
+    if (obs.touch === "door") this.note(p, "bumped into a shut door");
+    // Walking through a doorway is something the pet can feel (the floor changes under it for a step or two).
+    const inDoor = Object.values(this.world.layout.doorRects).some((r) => p.x > r.x - 8 && p.x < r.x + r.w + 8 && p.y > r.y - 8 && p.y < r.y + r.h + 8);
+    if (inDoor && !p.inDoorway) this.note(p, "passed through a doorway");
+    p.inDoorway = inDoor;
   }
 
   private note(p: PetState, text: string) {
@@ -276,6 +332,20 @@ export class Simulation {
     const prevMode = p.mode;
     const prevAction = p.s1.action;
 
+    // Pushing a shut door: if one is right there, it swings open (unless it is locked).
+    if (dec.action === "open_door") {
+      let nearest: { id: string; d: number } | null = null;
+      for (const id of this.world.shutDoors()) {
+        const r = this.world.layout.doorRects[id];
+        const d = Math.hypot(p.x - Math.max(r.x, Math.min(p.x, r.x + r.w)), p.y - Math.max(r.y, Math.min(p.y, r.y + r.h)));
+        if (d < 60 && (!nearest || d < nearest.d)) nearest = { id, d };
+      }
+      if (nearest) {
+        const res = this.world.openDoor(nearest.id, this.simSec);
+        this.note(p, res === "locked" ? "pushed a shut door but it would not open" : "pushed a door open");
+      }
+    }
+
     // Turn, then walk in small increments so nothing tunnels through an obstacle.
     const turn = clamp(dec.turn, -1.5, 1.5);
     p.heading = normAngle(p.heading + turn);
@@ -283,6 +353,7 @@ export class Simulation {
     p.bumped = false;
     p.touch = null;
     let moved = 0;
+    const startX = p.x, startY = p.y;
     const dist = WALK_SPEED * clamp(dec.forward, 0, 1) * DT;
     const steps = Math.ceil(dist / 6);
     for (let i = 0; i < steps; i++) {
@@ -313,10 +384,10 @@ export class Simulation {
       moved += step;
     }
     p.speed = moved / DT;
+    p.moved = { x: p.x - startX, y: p.y - startY };
 
     // Charger pad contact is a touch the pet can feel.
-    const charger = centerOf(OBJECTS.find((o) => o.kind === "charger")!);
-    const onPad = Math.hypot(p.x - charger.x, p.y - charger.y) < 36;
+    const onPad = this.world.layout.objects.some((o) => { if (o.kind !== "charger") return false; const c = centerOf(o); return Math.hypot(p.x - c.x, p.y - c.y) < 36; });
     if (onPad && !p.touch) p.touch = "pad";
 
     // Mode.
@@ -328,9 +399,10 @@ export class Simulation {
 
     // Energy: drain by activity, gain from the charger pad or sunlight patch.
     const drainPerMin = p.mode === "moving" ? 0.12 : p.mode === "sleeping" ? 0.01 : p.mode === "dormant" ? -0.01 : 0.03;
-    const patch = this.world.sunPatch();
+    const room = this.world.roomIdAt(p.x, p.y);
+    const patch = this.world.sunPatch(room);
     const env = this.world.env;
-    const inSun = env.curtainOpen && env.sunIntensity > 0 && Math.hypot(p.x - patch.x, p.y - patch.y) < patch.r;
+    const inSun = this.world.roomEnv(room).curtainOpen && env.sunIntensity > 0 && Math.hypot(p.x - patch.x, p.y - patch.y) < patch.r;
     p.chargeRate = Math.round(((onPad ? 1 : 0) + (inSun ? 0.2 * env.sunIntensity : 0)) * 1000) / 1000;
     p.energy = clamp(p.energy + ((p.chargeRate - drainPerMin) * DT) / 60, 0, 100);
 
@@ -369,8 +441,8 @@ export class Simulation {
   }
 
   private collision(p: PetState, x: number, y: number): PetState["touch"] {
-    if (x < PET_RADIUS || y < PET_RADIUS || x > ROOM.width - PET_RADIUS || y > ROOM.height - PET_RADIUS) return "wall";
-    if (SOLIDS.some((s) => circleHitsShape(x, y, PET_RADIUS, s))) return "object";
+    const hit = blockedAt(this.world.layout, x, y, PET_RADIUS, this.world.shutDoors());
+    if (hit) return hit;
     if (this.pets.some((o) => o.id !== p.id && Math.hypot(x - o.x, y - o.y) < PET_RADIUS * 2)) return "pet";
     if (Math.hypot(x - this.human.x, y - this.human.y) < PET_RADIUS + HUMAN_RADIUS) return "human";
     if (Math.hypot(x - this.teacher.x, y - this.teacher.y) < PET_RADIUS + TEACHER_RADIUS) return "teacher";

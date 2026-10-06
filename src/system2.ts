@@ -10,6 +10,7 @@ import { describeCues } from "./cues.js";
 import { describeExpectations, describeSurprises } from "./predict.js";
 import { describeGists, markGistsUsed } from "./sleep.js";
 import { copiesDream, dreamLine } from "./dreams.js";
+import { describeOthers, sourceNote } from "./relations.js";
 import { copiesRefuted } from "./verify.js";
 import { KNOB_NAMES, describeHabits, proposeTune, type KnobName } from "./rules.js";
 
@@ -71,6 +72,7 @@ export function buildNotes(p: PetState, day: number, timeOfDay: number, nearby =
     `Sees: ${m.sensed.seen.length ? m.sensed.seen.join("; ") : "nothing in view"}.`,
     `Within reach, in any direction (you can sense this even without seeing it): ${m.sensed.near?.length ? m.sensed.near.join("; ") : "nothing"}.`,
     `Within earshot: ${nearby ? `${nearby} other creature${nearby > 1 ? "s" : ""}` : "nobody"}.`,
+    `The others I know (I tell them apart by how they look, I do not know their names):\n${describeOthers(p, nowSec).join("\n") || "- (no one yet)"}`,
     `Hearing a steady tone: ${m.sensed.tone || "none right now"}.`,
     `How well I can predict things: ${describeExpectations(p)}`,
     `What has surprised me lately (something I expected did not happen):\n${describeSurprises(p, nowSec).join("\n") || "- (nothing)"}`,
@@ -80,7 +82,7 @@ export function buildNotes(p: PetState, day: number, timeOfDay: number, nearby =
     `Memorable moments:\n${moments.length ? moments.join("\n") : "- (none yet)"}`,
     `Recent experience:\n${m.episodes.length ? m.episodes.slice(-10).map((e) => "- " + e).join("\n") : "- (nothing yet)"}`,
     `Current beliefs:\n${m.beliefs.length ? m.beliefs.map((b) => `- ${b.text} [how sure: ${b.confidence.toFixed(2)}${b.verdict === "contradicted" ? `; my own experience disagrees: ${b.why}` : b.verdict === "supported" ? "; borne out by my experience" : ""}]`).join("\n") : "- (none yet)"}`,
-    `Things others told me (claims, NOT verified facts):\n${m.claims.length ? m.claims.slice(-5).map((c) => `- ${c.text} [${c.status}${c.why && c.status !== "unverified" ? `: ${c.why}` : ""}]`).join("\n") : "- (nothing)"}`,
+    `Things others told me (claims, NOT verified facts):\n${m.claims.length ? m.claims.slice(-5).map((c) => `- ${c.text}${sourceNote(m, c)} [${c.status}${c.why && c.status !== "unverified" ? `: ${c.why}` : ""}]`).join("\n") : "- (nothing)"}`,
     `Things I believed or was told that my own experience showed to be WRONG (do not take them up again):\n${(m.refuted ?? []).filter((r) => nowSec - r.tSec < 3 * 86400).slice(-3).map((r) => `- ${r.text} (${r.why})`).join("\n") || "- (none)"}`,
     `Questions you asked yourself lately (ask something NEW this time, not one of these): ${m.recentQuestions?.length ? m.recentQuestions.map((q) => `"${q}"`).join(" | ") : "(none yet)"}`,
     ...((m.repeatStreak ?? 0) >= 2 ? [`You have asked the same thing several times in a row. Think about something completely different now: your body, the room, the others, or something you could try.`] : []),

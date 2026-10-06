@@ -5,9 +5,19 @@ import type { Gist, SleepSummary } from "./sleep.js";
 import type { Dream } from "./dreams.js";
 import type { PredictState } from "./predict.js";
 import type { RuleState } from "./rules.js";
+import type { Relation } from "./relations.js";
 
 export interface Traits { curiosity: number; social: number; caution: number; patience: number }
-export interface PetDef { id: string; name: string; color: string; traits: Traits; start?: { x: number; y: number } }
+/** How a creature sounds when it speaks aloud: a Kokoro voice, a speed, and a pitch for the browser's own voices. Every pet and the Teacher get a different one. */
+export interface VoiceDef { id: string; speed?: number; pitch?: number }
+export const VOICES: readonly VoiceDef[] = [
+  { id: "af_sky", speed: 1.08, pitch: 1.35 }, { id: "bm_george", speed: 0.92, pitch: 0.7 }, { id: "af_bella", speed: 1.0, pitch: 1.1 },
+  { id: "am_michael", speed: 1.0, pitch: 0.85 }, { id: "bf_isabella", speed: 1.05, pitch: 1.25 }, { id: "am_adam", speed: 0.95, pitch: 0.6 },
+  { id: "af_nicole", speed: 1.0, pitch: 1.0 }, { id: "bm_lewis", speed: 1.0, pitch: 0.8 },
+];
+export const TEACHER_VOICE: VoiceDef = { id: "bf_emma", speed: 0.95, pitch: 0.95 };
+
+export interface PetDef { id: string; name: string; color: string; traits: Traits; start?: { x: number; y: number }; voice?: VoiceDef }
 
 /** Drive levels are need levels: 0 = satisfied, 1 = urgent. Energy need is derived from the battery. */
 export interface Drives { energy: number; curiosity: number; social: number; rest: number }
@@ -27,10 +37,14 @@ export interface S1State {
   followedAt?: number; // sim seconds of the last tick spent following a tone
   detourUntil?: number; // after steering round an obstacle, keep going straight until then instead of turning straight back
   giveUpUntil?: number; // a tone attempt made no progress: explore instead until then
+  doorGoalUntil?: number; // heading for a doorway on purpose until then
+  doorCooldownUntil?: number; // not curious about doorways again before this
+  passUntil?: number; // walking straight through a doorway until then
 }
 
 export interface PetState {
   id: string;
+  voice?: VoiceDef; // how it sounds aloud (see VOICES)
   name: string;
   color: string;
   traits: Traits;
@@ -43,7 +57,10 @@ export interface PetState {
   mode: PetMode;
   drives: Drives;
   bumped: boolean;
-  touch: "wall" | "object" | "pet" | "human" | "teacher" | "pad" | null;
+  anchors?: Record<string, { x: number; y: number }>; // where it reckoned each charger pad to be (by its hum), to correct drift
+  inDoorway?: boolean; // standing in a doorway right now (to note each passing once)
+  moved?: { x: number; y: number }; // how far the body actually moved in the last tick (what its odometry measures)
+  touch: "wall" | "door" | "object" | "pet" | "human" | "teacher" | "pad" | null;
   chargeRate: number; // %/min being taken in right now (solar or charger)
   lastPetSeenSec: number;
   rngState: number;
@@ -63,7 +80,7 @@ export type Suggestion = "none" | "seek_light" | "find_pet" | "inspect_object" |
 export const SUGGESTIONS: readonly Suggestion[] = ["none", "seek_light", "find_pet", "inspect_object", "rest", "follow_tone"];
 
 /** Something another voice asserted. Speech is a claim, not a fact, until the pet verifies it itself. */
-export interface Claim { text: string; from: string; tSec: number; status: "unverified" | "supported" | "contradicted"; why?: string; checkedSec?: number } // why: what the pet's own experience showed
+export interface Claim { text: string; from: string; tSec: number; status: "unverified" | "supported" | "contradicted"; why?: string; checkedSec?: number; fromKey?: string; counted?: "supported" | "contradicted" } // why: what the pet's own experience showed
 
 export interface Belief { text: string; confidence: number; updatedSec: number; checkedSec?: number; verdict?: "supported" | "contradicted"; why?: string } // checkedSec: evidence up to here has already been counted
 
@@ -85,13 +102,14 @@ export interface Mind {
   recentQuestions: string[]; // what it asked itself lately, so it can be told to ask something new
   recentThoughts: string[]; // its last few thoughts, shown back to it in a deep reflection
   repeatStreak: number; // how many slow thoughts in a row asked a question it had already asked
+  others: Record<string, Relation>; // the individuals it has come to know, by look (see relations.ts)
   dreams: Dream[]; // remembered as dreams: kept apart from beliefs, claims, moments and gists, and never treated as fact
   sensed: { light: number; temperature: number; seen: string[]; near: string[]; heard: string; tone: string; touch: string };
   lastThoughtSec: number;
 }
 
 export function newMind(): Mind {
-  return { beliefs: [], question: "", intention: null, suggestion: null, claims: [], episodes: [], scenes: [], cues: {}, gists: [], gistDue: false, lastSleep: null, refuted: [], recentQuestions: [], recentThoughts: [], repeatStreak: 0, dreams: [], sensed: { light: 0, temperature: 0, seen: [], near: [], heard: "", tone: "", touch: "" }, lastThoughtSec: -1e9 };
+  return { beliefs: [], question: "", intention: null, suggestion: null, claims: [], episodes: [], scenes: [], cues: {}, gists: [], gistDue: false, lastSleep: null, refuted: [], recentQuestions: [], recentThoughts: [], repeatStreak: 0, others: {}, dreams: [], sensed: { light: 0, temperature: 0, seen: [], near: [], heard: "", tone: "", touch: "" }, lastThoughtSec: -1e9 };
 }
 
 /** Running counters per pet, shown on the dashboard. */
@@ -131,6 +149,7 @@ export function spawnPet(def: PetDef, seed: number, index: number): PetState {
     name: def.name,
     color: def.color,
     traits: def.traits,
+    voice: def.voice ?? VOICES[index % VOICES.length],
     x: start.x,
     y: start.y,
     heading: rng.next() * Math.PI * 2 - Math.PI,

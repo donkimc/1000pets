@@ -5,11 +5,12 @@ import type { PetState } from "./pet.js";
 import { Rng } from "./rng.js";
 import type { Observation } from "./sensors.js";
 import { cueFor, cueTrust, novelty, startGoal } from "./cues.js";
+import { pickCompany } from "./relations.js";
 import { ruleValue, type KnobName } from "./rules.js";
 
 export type Action =
   | "dormant" | "avoid" | "sleep" | "charge" | "seek_light"
-  | "approach_pet" | "socialize" | "approach_object" | "inspect" | "follow_tone" | "wander" | "pause";
+  | "approach_pet" | "socialize" | "approach_object" | "inspect" | "follow_tone" | "wander" | "pause" | "explore_door" | "open_door";
 
 export interface Decision {
   action: Action;
@@ -76,6 +77,17 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
   // 2. Hold a chosen stationary behaviour (inspecting, socialising, pausing) until its timer ends.
   if (nowSec < s1.holdUntil) return stay(s1.holdAction as Action, "staying with it a little longer");
 
+  // 2b. A doorway the pet is heading through on purpose (after a tone, or out of curiosity). A shut door is pushed open instead of avoided.
+  const heading = nowSec - (s1.followedAt ?? -1e9) < 15 || nowSec < (s1.doorGoalUntil ?? 0);
+  const door = obs.vision.find((v) => v.door && Math.abs(v.bearing) < 0.5 && v.distance < 110);
+  if (door && heading) {
+    if (door.door === "shut") {
+      if (door.distance > 42) return { action: "explore_door", reason: "heading for a shut door", forward: 0.5, turn: clamp(door.bearing, -MAX_TURN, MAX_TURN) };
+      return { action: "open_door", reason: "pushing the shut door open", forward: 0, turn: clamp(door.bearing, -0.3, 0.3) };
+    }
+    if (door.distance < 70) s1.passUntil = nowSec + 20;
+  }
+
   // 3. Reflex: do not walk into things.
   const clearance = 30 + 30 * t.caution;
   if (obs.proximity.front < clearance) {
@@ -83,6 +95,9 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
     const dir = obs.proximity.left > obs.proximity.right ? -1 : 1;
     return { action: "avoid", reason: `obstacle ${Math.round(obs.proximity.front)} ahead`, forward: obs.proximity.front < 22 ? 0 : 0.3, turn: dir * (0.9 + rng.next() * 0.6) };
   }
+
+  // Through a doorway: carry straight on, whatever the pet was steering toward, until it is well past.
+  if (nowSec < (s1.passUntil ?? 0)) return { action: "explore_door", reason: "going through the doorway", forward: 0.8, turn: 0 };
 
   const needEnergy = 1 - obs.energy / 100;
 
@@ -106,7 +121,7 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
   }
 
   // 6. Lonely: head for another pet, then stay near it for a while.
-  const pet = obs.vision.find((v) => v.category === "moving");
+  const pet = pickCompany(p, obs.vision, nowSec); // better company is worth a longer walk
   if (d.social + boost("find_pet") > rv("socialAt") && pet) {
     if (pet.distance > 75) return { action: "approach_pet", reason: `social need ${d.social.toFixed(2)}, another pet ahead` + tag("find_pet"), forward: 0.7, turn: clamp(pet.bearing, -MAX_TURN, MAX_TURN) };
     s1.holdUntil = nowSec + 60 + 240 * t.patience;
@@ -125,13 +140,21 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
   }
 
   // 7. Curious: go and look at something unfamiliar-looking, then lose interest for a while.
-  const thing = obs.vision.find((v) => v.category === "static" && v.size < 200);
+  const thing = obs.vision.find((v) => v.category === "static" && v.size < 200 && !v.door);
   if (d.curiosity + boost("inspect_object") > rv("curiousAt") && thing && nowSec >= s1.inspectCooldownUntil) {
     if (thing.distance > 95) return { action: "approach_object", reason: `curiosity ${d.curiosity.toFixed(2)}, something to look at` + tag("inspect_object"), forward: 0.8 - 0.4 * t.caution, turn: clamp(thing.bearing, -MAX_TURN, MAX_TURN) };
     s1.holdUntil = nowSec + 15 + 45 * t.patience;
     s1.holdAction = "inspect";
     s1.inspectCooldownUntil = s1.holdUntil + rv("inspectCooldown");
     return stay("inspect", "looking closely at an object");
+  }
+
+  // 7b. Curious about a doorway: go and see what is on the other side. Once in a while, not all the time.
+  const doorSeen = obs.vision.find((v) => v.door);
+  const goalOn = nowSec < (s1.doorGoalUntil ?? 0);
+  if (doorSeen && (goalOn || (d.curiosity > rv("curiousAt") && nowSec >= (s1.doorCooldownUntil ?? 0) && t.caution < 0.9))) {
+    if (!goalOn) { s1.doorGoalUntil = nowSec + 120; s1.doorCooldownUntil = nowSec + 1200 - 600 * t.curiosity; }
+    return { action: "explore_door", reason: `curious about the ${doorSeen.door} doorway`, forward: 0.7 - 0.3 * t.caution, turn: clamp(doorSeen.bearing, -MAX_TURN, MAX_TURN) };
   }
 
   // 8. Default: wander, with the occasional pause.

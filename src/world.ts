@@ -4,54 +4,15 @@
 // regardless of how often step() is called or at which speed the clock runs.
 import { Rng } from "./rng.js";
 
-export const ROOM = { width: 1000, height: 700 };
+import { Acoustics } from "./acoustics.js";
+import { LEGACY, centerOf, circleHitsShape, pointInShape, roomAt, shapeOf, type Layout, type ObjectKind, type RoomObject, type Shape } from "./layout.js";
+export { centerOf, circleHitsShape, pointInShape, shapeOf };
+export type { ObjectKind, RoomObject, Shape };
 
-export type ObjectKind = "window" | "door" | "plant" | "table" | "bed" | "charger" | "heater" | "lamp";
-export interface RoomObject { id: string; kind: ObjectKind; x: number; y: number; w: number; h: number }
-
-export const OBJECTS: readonly RoomObject[] = [
-  { id: "window", kind: "window", x: 650, y: 0, w: 200, h: 12 },
-  { id: "door", kind: "door", x: 880, y: 688, w: 80, h: 12 },
-  { id: "plant", kind: "plant", x: 500, y: 200, w: 40, h: 40 },
-  { id: "table", kind: "table", x: 400, y: 350, w: 140, h: 80 },
-  { id: "bed", kind: "bed", x: 60, y: 500, w: 160, h: 120 },
-  { id: "charger", kind: "charger", x: 900, y: 70, w: 40, h: 40 },
-  { id: "heater", kind: "heater", x: 40, y: 60, w: 70, h: 24 },
-  { id: "lamp", kind: "lamp", x: 300, y: 150, w: 30, h: 30 },
-];
-
-export type Shape =
-  | { type: "circle"; cx: number; cy: number; r: number }
-  | { type: "rect"; x: number; y: number; w: number; h: number };
-
-/** Plant and lamp are drawn as circles centred on (x, y); everything else is a rectangle with (x, y) as its corner. */
-export function shapeOf(o: RoomObject): Shape {
-  return o.kind === "plant" || o.kind === "lamp"
-    ? { type: "circle", cx: o.x, cy: o.y, r: o.w / 2 }
-    : { type: "rect", x: o.x, y: o.y, w: o.w, h: o.h };
-}
-
-export function centerOf(o: RoomObject): { x: number; y: number } {
-  const s = shapeOf(o);
-  return s.type === "circle" ? { x: s.cx, y: s.cy } : { x: s.x + s.w / 2, y: s.y + s.h / 2 };
-}
-
-/** Objects a pet cannot walk through. The window, door and charger pad are flush with walls or the floor. */
-const SOLID_KINDS: readonly ObjectKind[] = ["plant", "table", "bed", "heater", "lamp"];
-export const SOLIDS: readonly Shape[] = OBJECTS.filter((o) => SOLID_KINDS.includes(o.kind)).map(shapeOf);
-
-export function circleHitsShape(x: number, y: number, r: number, s: Shape): boolean {
-  if (s.type === "circle") return Math.hypot(x - s.cx, y - s.cy) < r + s.r;
-  const nx = Math.max(s.x, Math.min(x, s.x + s.w));
-  const ny = Math.max(s.y, Math.min(y, s.y + s.h));
-  return Math.hypot(x - nx, y - ny) < r;
-}
-
-export function pointInShape(x: number, y: number, s: Shape): boolean {
-  return s.type === "circle"
-    ? Math.hypot(x - s.cx, y - s.cy) < s.r
-    : x >= s.x && x <= s.x + s.w && y >= s.y && y <= s.y + s.h;
-}
+// The original single room. New code reads the layout from the world; these remain for older tests and tools.
+export const ROOM = { width: LEGACY.width, height: LEGACY.height };
+export const OBJECTS: readonly RoomObject[] = LEGACY.objects;
+export const SOLIDS: readonly Shape[] = LEGACY.solids;
 
 export type Weather = "clear" | "cloudy" | "rain";
 const WEATHER_SUN: Record<Weather, number> = { clear: 1, cloudy: 0.45, rain: 0.2 };
@@ -116,7 +77,17 @@ export interface WorldSnapshot {
   curtainStuckDay: number; // day number when the curtain failed to open, else -1
   doorOpenUntil: number; // simMinute at which the door closes, else -1
   overrides?: Overrides; // pinned values (absent in saves from before environment control)
+  layoutId?: string; // which floor plan this world uses (absent: the original single room)
+  doors?: Record<string, { open: boolean; closeAtSec: number }>; // the doors between rooms; absent means all shut
+  locked?: string[]; // doors nobody can open until they are unlocked
+  rooms?: Record<string, RoomEnv>; // lamp, heater, curtain and temperature of every room but the first (the first is `env`)
+  roomOverrides?: Record<string, Partial<RoomEnv>>; // values pinned for one room
 }
+
+/** What can differ from room to room. The first room's values are the world's `env` fields, so older code and saves keep working. */
+export interface RoomEnv { indoorTemp: number; heaterOn: boolean; lampOn: boolean; curtainOpen: boolean }
+export const ROOM_FIELDS = ["indoorTemp", "heaterOn", "lampOn", "curtainOpen"] as const;
+export type RoomField = (typeof ROOM_FIELDS)[number];
 
 export interface WorldEvent {
   type: string;
@@ -139,7 +110,7 @@ export class World {
   private rng: Rng;
   snap: WorldSnapshot;
 
-  constructor(seed: number, snapshot?: WorldSnapshot) {
+  constructor(seed: number, snapshot?: WorldSnapshot, readonly layout: Layout = LEGACY) {
     this.rng = new Rng(snapshot?.rngState ?? seed);
     this.snap = snapshot
       ? structuredClone(snapshot)
@@ -163,6 +134,12 @@ export class World {
         };
     this.snap.overrides ??= {};
     this.snap.env.beaconOn ??= true; // saves from before the beacon
+    this.snap.layoutId = layout.id;
+    this.snap.doors ??= {};
+    this.snap.locked ??= [];
+    this.snap.rooms ??= {};
+    this.snap.roomOverrides ??= {};
+    for (const r of layout.rooms.slice(1)) this.snap.rooms[r.id] ??= { indoorTemp: this.snap.env.indoorTemp, heaterOn: false, lampOn: false, curtainOpen: false };
   }
 
   get overrides(): Overrides {
@@ -297,31 +274,142 @@ export class World {
     // The charger's hum is simply on, unless someone has switched it off.
     if (pin.beaconOn === undefined) e.beaconOn = true;
 
+    this.stepRooms(tod, weekend, events);
+
     // Occasional ambient noise from outside (for the hearing sensor later).
     if (this.rng.chance(1 / 600)) this.emit(events, "noise", this.rng.pick(["footsteps", "car", "voices", "knock"]));
   }
 
-  /** Light level (0..100) at a point in the room: daylight, a moving sun patch on the floor, and the lamp. */
+  // ---- rooms and doors ----
+  private _ac?: Acoustics;
+  get acoustics(): Acoustics { return (this._ac ??= new Acoustics(this.layout)); }
+
+  get primaryRoom(): string { return this.layout.rooms[0].id; }
+
+  /** Lamp, heater, curtain and temperature of one room. */
+  roomEnv(roomId: string): RoomEnv {
+    if (roomId === this.primaryRoom) { const e = this.snap.env; return { indoorTemp: e.indoorTemp, heaterOn: e.heaterOn, lampOn: e.lampOn, curtainOpen: e.curtainOpen }; }
+    return this.snap.rooms![roomId] ?? this.roomEnv(this.primaryRoom);
+  }
+
+  roomIdAt(x: number, y: number): string { return roomAt(this.layout, x, y)?.id ?? this.primaryRoom; }
+
+  /** Pin one room's value (or release it with null). The first room's pins are the world's own pins. */
+  setRoomOverride(roomId: string, field: string, value: unknown | null) {
+    if (!this.layout.rooms.some((r) => r.id === roomId)) throw new Error(`unknown room "${roomId}"`);
+    if (!(ROOM_FIELDS as readonly string[]).includes(field)) throw new Error(`"${field}" is not something a single room has`);
+    if (roomId === this.primaryRoom) return this.setOverride(field, value);
+    const f = field as RoomField;
+    const room = this.snap.rooms![roomId] as unknown as Record<string, unknown>;
+    const pins = (this.snap.roomOverrides![roomId] ??= {}) as Record<string, unknown>;
+    const from = room[f];
+    if (value === null || value === "auto") { delete pins[f]; return { field: f, from, to: from, mode: "auto" as const }; }
+    const v = parseOverride(f, value);
+    pins[f] = v;
+    room[f] = v;
+    return { field: f, from, to: v, mode: "pin" as const };
+  }
+
+  isDoorOpen(id: string): boolean { return !!this.snap.doors![id]?.open; }
+  isLocked(id: string): boolean { return this.snap.locked!.includes(id); }
+  /** Doors that are closed right now: bodies and sight cannot pass them. */
+  shutDoors(): string[] { return this.layout.doors.filter((d) => !this.isDoorOpen(d.id)).map((d) => d.id); }
+
+  /** Someone opens a door. It stays open for `holdSec`, then closes by itself once nobody is in the way. */
+  openDoor(id: string, nowSec: number, holdSec = 120): "opened" | "already" | "locked" | "unknown" {
+    if (!this.layout.doorRects[id]) return "unknown";
+    if (this.isLocked(id)) return "locked";
+    const d = (this.snap.doors![id] ??= { open: false, closeAtSec: 0 });
+    const was = d.open;
+    d.open = true;
+    d.closeAtSec = Math.max(d.closeAtSec, nowSec + holdSec);
+    return was ? "already" : "opened";
+  }
+
+  closeDoor(id: string): void { const d = this.snap.doors![id]; if (d) d.open = false; }
+
+  setLocked(id: string, locked: boolean): void {
+    if (!this.layout.doorRects[id]) throw new Error(`unknown door "${id}"`);
+    const set = new Set(this.snap.locked);
+    if (locked) { set.add(id); this.closeDoor(id); } else set.delete(id);
+    this.snap.locked = [...set];
+  }
+
+  /** Doors whose time is up close, unless a body is standing in the doorway. `inDoorway` says whether one is. */
+  tickDoors(nowSec: number, inDoorway: (id: string) => boolean): string[] {
+    const closed: string[] = [];
+    for (const [id, d] of Object.entries(this.snap.doors!)) {
+      if (d.open && nowSec >= d.closeAtSec) {
+        if (inDoorway(id)) d.closeAtSec = nowSec + 10;
+        else { d.open = false; closed.push(id); }
+      }
+    }
+    return closed;
+  }
+
+  /** The other rooms follow the same weather and the same kind of day, with their own temperature, lamp, heater and curtain. */
+  private stepRooms(tod: number, weekend: boolean, events: WorldEvent[]) {
+    const s = this.snap, e = s.env;
+    const rooms = this.layout.rooms;
+    const exteriorRoom = this.layout.objects.find((o) => o.kind === "door")?.room ?? rooms[0].id;
+    for (let i = 1; i < rooms.length; i++) {
+      const id = rooms[i].id, r = s.rooms![id], pin = s.roomOverrides![id] ?? {};
+      const hasWindow = this.layout.objects.some((o) => o.room === id && o.kind === "window");
+      // Curtain: opens a little later in each room.
+      const openAt = (weekend ? 540 : 420) + 20 * i, closeAt = (weekend ? 1200 : 1140) - 10 * i;
+      if (pin.curtainOpen === undefined) {
+        const want = hasWindow && tod >= openAt && tod < closeAt;
+        if (want !== r.curtainOpen) { r.curtainOpen = want; this.emit(events, want ? "curtain_opened" : "curtain_closed", id); }
+      }
+      // Lamp: the evening, shifted so the rooms are not all switched at once.
+      if (pin.lampOn === undefined) {
+        const want = tod >= 1110 + 20 * i && tod < 1380 - 15 * i;
+        if (want !== r.lampOn) { r.lampOn = want; this.emit(events, want ? "lamp_on" : "lamp_off", id); }
+      }
+      // Heater: the same thermostat, on this room's temperature.
+      const awake = tod >= 360 && tod < 1380;
+      if (pin.heaterOn === undefined) {
+        if (!r.heaterOn && awake && r.indoorTemp < 19) { r.heaterOn = true; this.emit(events, "heater_on", `${id} ${r.indoorTemp}°C`); }
+        else if (r.heaterOn && (!awake || r.indoorTemp > 21)) { r.heaterOn = false; this.emit(events, "heater_off", `${id} ${r.indoorTemp}°C`); }
+      }
+      // Temperature: toward what outdoors, sun through its window and its heater would make it, and a little toward whatever room an open door joins it to.
+      let target = e.outdoorTemp + 4 + (r.curtainOpen ? e.sunIntensity * 3 : 0) + (r.heaterOn ? 5 : 0) + (id === exteriorRoom && e.doorOpen ? -2 : 0);
+      for (const d of this.layout.doors) {
+        if (!this.isDoorOpen(d.id) || (d.a !== id && d.b !== id)) continue;
+        target += (this.roomEnv(d.a === id ? d.b : d.a).indoorTemp - r.indoorTemp) * 0.5;
+      }
+      if (pin.indoorTemp === undefined) r.indoorTemp = round2(r.indoorTemp + (target - r.indoorTemp) * 0.01);
+    }
+  }
+
+  /** Light level (0..100) at a point: daylight through its room's window, a moving sun patch on the floor, and its room's lamp. */
   lightAt(x: number, y: number): number {
     const e = this.snap.env;
-    const tod = this.snap.simMinute % DAY;
-    let light = 2 + 18 * e.sunIntensity * (e.curtainOpen ? 1 : 0.1);
-    if (e.curtainOpen && e.sunIntensity > 0) {
-      const p = this.sunPatch();
+    const room = this.roomIdAt(x, y);
+    const re = this.roomEnv(room);
+    const windows = this.layout.objects.filter((o) => o.room === room && o.kind === "window");
+    let light = 2 + (windows.length ? 18 * e.sunIntensity * (re.curtainOpen ? 1 : 0.1) : 0);
+    if (windows.length && re.curtainOpen && e.sunIntensity > 0) {
+      const p = this.sunPatch(room);
       if (Math.hypot(x - p.x, y - p.y) < p.r) light += 70 * e.sunIntensity;
     }
-    if (e.lampOn) {
-      const lamp = OBJECTS.find((o) => o.id === "lamp")!;
-      light += Math.max(0, 1 - Math.hypot(x - lamp.x, y - lamp.y) / 260) * 55;
+    if (re.lampOn) {
+      for (const lamp of this.layout.objects.filter((o) => o.room === room && o.kind === "lamp")) {
+        light += Math.max(0, 1 - Math.hypot(x - lamp.x, y - lamp.y) / 260) * 55;
+      }
     }
-    void tod;
     return Math.min(100, Math.round(light));
   }
 
-  /** Sun patch on the floor; it slides across as the day goes on. */
-  sunPatch(): { x: number; y: number; r: number } {
+  /** Sun patch on a room's floor; it slides across as the day goes on, in from that room's window. */
+  sunPatch(roomId: string = this.primaryRoom): { x: number; y: number; r: number } {
     const tod = this.snap.simMinute % DAY;
     const f = Math.max(-1, Math.min(1, (tod - 720) / 360));
-    return { x: 780 - f * 200, y: 150 + (1 - Math.sin((Math.PI * Math.max(0, tod - 360)) / 720)) * 150, r: 110 };
+    const room = this.layout.rooms.find((r) => r.id === roomId) ?? this.layout.rooms[0];
+    const win = this.layout.objects.find((o) => o.room === room.id && o.kind === "window");
+    const wx = win ? win.x + win.w / 2 - room.x : 750; // how far along its wall the window is
+    const depth = 150 + (1 - Math.sin((Math.PI * Math.max(0, tod - 360)) / 720)) * 150; // how far in from the window's wall
+    const fromBottom = !!win && win.y > room.y + room.h / 2;
+    return { x: room.x + wx + 30 - f * 200, y: fromBottom ? room.y + room.h - depth : room.y + depth, r: 110 };
   }
 }

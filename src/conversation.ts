@@ -5,7 +5,10 @@ import { LlmUnavailable, type ChatMessage, type CompleteOpts, type LlmResult } f
 import type { PetState } from "./pet.js";
 import type { Simulation } from "./sim.js";
 import type { Store } from "./store.js";
-import { GATE, HUMAN_VOICE_RANGE, PET_VOICE_RANGE, TEACHER_VOICE_RANGE, canSpeak, describeSource, inEarshot, looksLikeJson, type Speaker, type Target, type Utterance } from "./speech.js";
+import { GATE, HUMAN_VOICE_RANGE, PET_VOICE_RANGE, TEACHER_VOICE_RANGE, canSpeak, canSee, describeSource, inEarshot, looksLikeJson, type Speaker, type Target, type Utterance } from "./speech.js";
+import { creditClaim, learnTeacherLook, sourceOf } from "./relations.js";
+import { HUMAN_HUE, TEACHER_HUE } from "./sensors.js";
+import { hueOf } from "./pet.js";
 import { buildNotes, type ParsedThought, type SpeechHook } from "./system2.js";
 
 export interface LlmLike {
@@ -81,7 +84,7 @@ export class Conversation implements SpeechHook {
   private humanSpeaker(): Speaker { return { kind: "human", id: "human", name: "Human", x: this.sim.human.x, y: this.sim.human.y }; }
 
   nearbyCount(p: PetState): number {
-    return inEarshot(this.sim.pets, this.speakerOf(p), PET_VOICE_RANGE).length + (Math.hypot(this.sim.human.x - p.x, this.sim.human.y - p.y) <= PET_VOICE_RANGE ? 1 : 0);
+    return inEarshot(this.sim.pets, this.speakerOf(p), PET_VOICE_RANGE, this.walls()).length + (Math.hypot(this.sim.human.x - p.x, this.sim.human.y - p.y) <= PET_VOICE_RANGE ? 1 : 0);
   }
 
   private stamp() {
@@ -101,7 +104,7 @@ export class Conversation implements SpeechHook {
   // ---- a pet takes the initiative (System 2 proposed it, System 1 decides) ----
   async maybeSpeak(p: PetState, say: NonNullable<ParsedThought["say"]>, thought: ParsedThought, model: { provider: string; model: string }): Promise<void> {
     this.decayChain();
-    const listeners = inEarshot(this.sim.pets, this.speakerOf(p), PET_VOICE_RANGE);
+    const listeners = inEarshot(this.sim.pets, this.speakerOf(p), PET_VOICE_RANGE, this.walls());
     const humanNear = Math.hypot(this.sim.human.x - p.x, this.sim.human.y - p.y) <= PET_VOICE_RANGE;
     const now = this.now();
     const gate = canSpeak({
@@ -133,7 +136,7 @@ export class Conversation implements SpeechHook {
     const outsider = from === "human" || from === "teacher"; // a non-pet voice: no pet-chat gating
     const speaker = from === "human" ? this.humanSpeaker() : from === "teacher" ? this.teacherSpeaker() : this.speakerOf(from);
     const range = from === "human" ? HUMAN_VOICE_RANGE : from === "teacher" ? TEACHER_VOICE_RANGE : PET_VOICE_RANGE;
-    let heard = inEarshot(this.sim.pets, speaker, range);
+    let heard = inEarshot(this.sim.pets, speaker, range, this.walls());
     let notHeard: string[] = [];
     if (to.kind === "pet") {
       const target = this.sim.pets.find((x) => x.id === to.id);
@@ -176,6 +179,8 @@ export class Conversation implements SpeechHook {
     return u;
   }
 
+  private walls() { return { layout: this.sim.world.layout, shut: this.sim.world.shutDoors() }; }
+
   private hear(h: PetState, speaker: Speaker, text: string) {
     const m = h.mind;
     const t = this.stamp();
@@ -213,9 +218,14 @@ export class Conversation implements SpeechHook {
     if (this.disposed) return;
     const parsed = parseReply(r.text);
     if (!parsed) return;
+    // Whoever it can see speaking owns what is said; a voice it cannot place belongs to nobody in particular. The Teacher says who it is.
+    const seen = canSee(p, speaker);
+    const hue = speaker.kind === "pet" ? hueOf(this.sim.pets.find((x) => x.id === speaker.id)?.color ?? "#808080") : speaker.kind === "human" ? HUMAN_HUE : TEACHER_HUE;
+    if (speaker.kind === "teacher" && seen) learnTeacherLook(p.mind, hue, this.sim.simSec);
+    const fromKey = sourceOf(p.mind, speaker.kind === "teacher" ? "teacher" : { hue }, seen, this.sim.simSec);
     for (const c of parsed.claims) {
-      p.mind.claims.push({ text: c, from: describeSource(p, speaker), tSec: this.sim.simSec, status: "unverified" });
-      if (p.mind.claims.length > 10) p.mind.claims.shift();
+      p.mind.claims.push({ text: c, from: describeSource(p, speaker), tSec: this.sim.simSec, status: "unverified", ...(fromKey ? { fromKey } : {}) });
+      if (p.mind.claims.length > 10) creditClaim(p.mind, p.mind.claims.shift()!);
     }
     if (!parsed.reply) return this.recordSilence(p, "chose to stay silent", `reply to "${text.slice(0, 60)}"`);
     await this.deliver(p, speaker.kind === "pet" ? { kind: "pet", id: speaker.id } : { kind: speaker.kind }, cleanSpeech(parsed.reply), {

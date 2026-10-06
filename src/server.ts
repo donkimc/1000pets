@@ -16,13 +16,16 @@ import { Consolidator } from "./sleep.js";
 import { Dreamer } from "./dreams.js";
 import { readFileSync } from "node:fs";
 import { Simulation, type SimSnapshot } from "./sim.js";
-import type { PetDef } from "./pet.js";
+import { TEACHER_VOICE, hueOf, type PetDef } from "./pet.js";
+import { HUMAN_HUE } from "./sensors.js";
+import { KNOWN_SEC, affinityOf, trustOf } from "./relations.js";
 import { gatewayFromEnv, type ProviderStats } from "./llm.js";
 import { System2 } from "./system2.js";
 import { Conversation } from "./conversation.js";
 import type { Target } from "./speech.js";
 import { readdir, stat } from "node:fs/promises";
-import { OBJECTS, OVERRIDE_FIELDS, ROOM, World, type WorldSnapshot } from "./world.js";
+import { OVERRIDE_FIELDS, ROOM_FIELDS, World, type WorldSnapshot } from "./world.js";
+import { LAYOUTS, HOUSE } from "./layout.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
@@ -46,13 +49,14 @@ console.log(`LLM providers: ${llm.snapshot().map((p) => `${p.name}(${p.model}${p
 const app = express();
 app.use(express.json({ limit: "3mb" }));
 app.use(express.static(path.join(__dirname, "..", "public")));
+app.use("/vendor/three", express.static(path.join(__dirname, "..", "node_modules", "three", "build"), { maxAge: "7d" })); // the 3D view runs on three.js, served from here so it works offline
 
 const server = createServer(app);
 const wss = new WebSocketServer({ server, path: "/ws" });
 
 // The human is steered by joystick input over the WebSocket; input goes stale after 0.5 s so a lost
 // connection or released finger always stops the avatar.
-const input = { dx: 0, dy: 0, at: 0 };
+const input = { dx: 0, dy: 0, at: 0, yaw: undefined as number | undefined };
 wss.on("connection", (ws) => {
   ws.on("message", (raw) => {
     try {
@@ -61,6 +65,9 @@ wss.on("connection", (ws) => {
         input.dx = Math.max(-1, Math.min(1, m.dx));
         input.dy = Math.max(-1, Math.min(1, m.dy));
         input.at = Date.now();
+        input.yaw = Number.isFinite(m.yaw) ? m.yaw : undefined; // first-person look direction, if the client sends one
+      } else if (m?.type === "goto" && Number.isFinite(m.x) && Number.isFinite(m.y) && sim) {
+        sim.setHumanGoal(Math.max(0, Math.min(world.layout.width, m.x)), Math.max(0, Math.min(world.layout.height, m.y))); // tapped the map
       }
     } catch {
       /* ignore malformed messages */
@@ -90,10 +97,18 @@ let loading = false;
 const stampNow = () => ({ simMinute: Math.floor(sim.simSec / 60), ...clock.parts });
 
 /** Environment control shared by the person and the teacher. Every change is written to env-changes.jsonl. */
-async function setEnv(field: string, value: unknown, source: "human" | "teacher", reason = "") {
-  const r = world.setOverride(field, value);
-  await store.append("env-changes", { ...stampNow(), source, field: r.field, mode: r.mode, from: r.from, to: r.to, reason });
-  const ev = { type: "env_changed", detail: `${source}: ${r.field} ${r.mode === "auto" ? "released to auto" : "-> " + String(r.to)}${reason ? " (" + reason + ")" : ""}`, ...clock.parts };
+async function setEnv(field: string, value: unknown, source: "human" | "teacher", reason = "", scope: { room?: string; door?: string } = {}) {
+  let r: { field: string; from: unknown; to: unknown; mode: "pin" | "auto" };
+  if (field === "doorLocked") {
+    const id = String(scope.door ?? "");
+    const from = world.isLocked(id);
+    world.setLocked(id, value === true || value === "true");
+    r = { field, from, to: world.isLocked(id), mode: "pin" };
+  } else if (scope.room) r = world.setRoomOverride(scope.room, field, value);
+  else r = world.setOverride(field, value);
+  const where = scope.door ? ` ${scope.door}` : scope.room ? ` in ${scope.room}` : "";
+  await store.append("env-changes", { ...stampNow(), source, field: r.field, mode: r.mode, from: r.from, to: r.to, reason, ...(scope.room ? { room: scope.room } : {}), ...(scope.door ? { door: scope.door } : {}) });
+  const ev = { type: "env_changed", detail: `${source}: ${r.field}${where} ${r.mode === "auto" ? "released to auto" : "-> " + String(r.to)}${reason ? " (" + reason + ")" : ""}`, ...clock.parts };
   await store.append("events", ev);
   broadcast({ type: "events", events: [ev] });
   return r;
@@ -112,7 +127,7 @@ const AUTO_ENV_EVENTS: Record<string, (detail: string) => { field: string; to: u
 };
 
 const envControl: EnvControl = {
-  set: (field, value, source, reason) => setEnv(field, value, source, reason),
+  set: (field, value, source, reason, scope) => setEnv(field, value, source, reason, scope),
   recent: (limit) => store.readLog("env-changes", limit),
 };
 
@@ -129,7 +144,9 @@ async function loadSession() {
   if (conversation) conversation.disposed = true;
   clock = new SimClock(savedClock?.simMs ?? 0);
   if (savedClock && (SPEEDS as readonly number[]).includes(savedClock.speed)) clock.speed = savedClock.speed;
-  world = new World(SEED, savedWorld ?? undefined);
+  // A new run lives in the house. A run saved in the old single room stays there, unless LAYOUT=house moves it into the house.
+  const layout = LAYOUTS[process.env.LAYOUT ?? savedWorld?.layoutId ?? (savedWorld ? "legacy" : "house")] ?? HOUSE;
+  world = new World(SEED, savedWorld ?? undefined, layout);
   sim = new Simulation(world, SEED, defaultRoster, savedSim ?? undefined);
   if (savedSim?.ruleLearning === undefined) sim.ruleLearning = process.env.RULE_LEARNING === "on"; // off unless switched on; a save remembers its own setting
   system2 = new System2(sim, llm, store, { intervalSec: Number(process.env.S2_INTERVAL_SEC ?? 70), patienceSec: Number(process.env.S2_PATIENCE_SEC ?? 240), deepEvery: Number(process.env.S2_DEEP_EVERY ?? 4), isPaused: () => clock.paused });
@@ -157,7 +174,7 @@ function petView() {
   return sim.pets.map((p) => ({
     id: p.id, name: p.name, color: p.color, x: Math.round(p.x), y: Math.round(p.y),
     heading: Math.round(p.heading * 100) / 100, mode: p.mode, action: p.s1.action,
-    energy: Math.round(p.energy * 10) / 10, drives: p.drives,
+    energy: Math.round(p.energy * 10) / 10, drives: p.drives, voice: p.voice,
   }));
 }
 
@@ -166,9 +183,16 @@ function humanView() {
   return { x: Math.round(h.x), y: Math.round(h.y), heading: Math.round(h.heading * 100) / 100, moving: h.moving };
 }
 
+function roomsView() {
+  return world.layout.rooms.map((r) => ({ id: r.id, name: r.name, ...world.roomEnv(r.id), pinned: r.id === world.primaryRoom ? Object.keys(world.overrides).filter((f) => (ROOM_FIELDS as readonly string[]).includes(f)) : Object.keys(world.snap.roomOverrides?.[r.id] ?? {}) }));
+}
+function doorsView() {
+  return world.layout.doors.map((d) => ({ id: d.id, a: d.a, b: d.b, open: world.isDoorOpen(d.id), locked: world.isLocked(d.id) }));
+}
+
 function worldView() {
   const t = sim.teacher;
-  return { env: world.env, sunPatch: world.sunPatch(), pets: petView(), human: humanView(), teacher: { x: Math.round(t.x), y: Math.round(t.y), heading: Math.round(t.heading * 100) / 100, moving: t.moving } };
+  return { env: world.env, rooms: roomsView(), doors: doorsView(), sunPatch: world.sunPatch(), sunPatches: Object.fromEntries(world.layout.rooms.map((r) => [r.id, world.sunPatch(r.id)])), pets: petView(), human: humanView(), teacher: { x: Math.round(t.x), y: Math.round(t.y), heading: Math.round(t.heading * 100) / 100, moving: t.moving } };
 }
 
 // Control endpoints are open unless ADMIN_TOKEN is set.
@@ -182,7 +206,7 @@ function requireAdmin(req: express.Request, res: express.Response, next: express
 
 app.get("/health", (_req, res) => res.json({ ok: true, ...status() }));
 app.get("/api/status", (_req, res) => res.json(status()));
-app.get("/api/world", (_req, res) => res.json({ room: ROOM, objects: OBJECTS, ...worldView() }));
+app.get("/api/world", (_req, res) => res.json({ room: { width: world.layout.width, height: world.layout.height }, teacherVoice: TEACHER_VOICE, layout: world.layout, objects: world.layout.objects, ...worldView() }));
 app.get("/api/events", async (req, res) => {
   const limit = Math.min(Number(req.query.limit ?? 50) || 50, 500);
   res.json(await store.readLog("events", limit));
@@ -228,7 +252,7 @@ app.get("/api/mind/:id", (req, res) => {
     return `D${Math.floor(m / 1440) + 1} ${String(Math.floor((m % 1440) / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
   };
   const scenes = [...p.mind.scenes].sort((a, b) => b.tSec - a.tSec).map((s) => ({
-    id: s.id, when: clockOf(s.tSec), kind: s.kind, why: s.why, importance: s.importance, view: s.view, uses: s.uses,
+    id: s.id, when: clockOf(s.tSec), kind: s.kind, why: s.why, importance: s.importance, view: s.view, grid: s.grid ?? null, uses: s.uses,
     text: describeScene(s, p, clockOf(s.tSec)), pose: s.pose,
   }));
   res.json({ question: p.mind.question, intention: p.mind.intention?.goal ?? null, beliefs: p.mind.beliefs, suggestion: p.mind.suggestion?.kind ?? null, episodes: p.mind.episodes, scenes,
@@ -238,6 +262,11 @@ app.get("/api/mind/:id", (req, res) => {
     rules: ruleView(p, sim.simSec),
     claims: p.mind.claims.map((c) => ({ text: c.text, from: c.from, status: c.status, why: c.why ?? null })),
     refuted: [...p.mind.refuted].reverse(),
+    others: Object.values(p.mind.others ?? {}).sort((a, b) => b.seenSec - a.seenSec).map((r) => {
+      // The pet does not know names; the page may say who it really is, by matching the look.
+      const who = r.label === "the Teacher" ? "the Teacher" : sim.pets.find((o) => o.id !== p.id && Math.abs(hueOf(o.color) - r.hue) <= 8)?.name ?? (Math.abs(r.hue - HUMAN_HUE) <= 8 ? "the human" : null);
+      return { label: r.label, actually: who, minutes: Math.round(r.seenSec / 60), bumps: r.bumps, told: r.told, right: r.right, wrong: r.wrong, trust: r.told ? Math.round(trustOf(r) * 100) / 100 : null, affinity: Math.round(affinityOf(r) * 100) / 100, known: r.seenSec >= KNOWN_SEC };
+    }),
     dreams: [...p.mind.dreams].reverse().map((d) => ({ id: d.id, theme: d.theme, narrative: d.narrative, worry: d.worry, twists: d.twists.map((t) => t.text), source: d.source })),
     cues: Object.values(p.mind.cues).map((c) => ({ key: c.key, pitch: c.pitch, minutes: Math.round(c.exposureSec / 60), support: c.support, contra: c.contra, ...cueTrust(c) })) });
 });
@@ -373,7 +402,7 @@ async function tick() {
   const realDt = Math.min((now - lastTickAt) / 1000, 1);
   lastTickAt = now;
   const fresh = now - input.at < 500;
-  sim.moveHuman(fresh ? input.dx : 0, fresh ? input.dy : 0, realDt);
+  sim.moveHuman(fresh ? input.dx : 0, fresh ? input.dy : 0, realDt, fresh ? input.yaw : undefined);
   clock.advance();
   // Cap work per tick so 1000x speed cannot starve the event loop; the world catches up on later ticks.
   system2.tick();
@@ -405,11 +434,11 @@ async function tick() {
 
 
 // ---- environment control (pin a value, or release it back to the daily schedule) ----
-const envView = () => ({ env: world.env, overrides: world.overrides, fields: OVERRIDE_FIELDS });
+const envView = () => ({ env: world.env, overrides: world.overrides, fields: OVERRIDE_FIELDS, rooms: roomsView(), doors: doorsView() });
 app.get("/api/env", (_req, res) => res.json(envView()));
 app.post("/api/env", requireAdmin, async (req, res) => {
   try {
-    await setEnv(String(req.body?.field ?? ""), req.body?.value === undefined ? null : req.body.value, "human", String(req.body?.reason ?? "").slice(0, 120));
+    await setEnv(String(req.body?.field ?? ""), req.body?.value === undefined ? null : req.body.value, "human", String(req.body?.reason ?? "").slice(0, 120), { room: req.body?.room ? String(req.body.room) : undefined, door: req.body?.door ? String(req.body.door) : undefined });
   } catch (e: any) {
     res.status(400).json({ error: e.message });
     return;
@@ -418,6 +447,7 @@ app.post("/api/env", requireAdmin, async (req, res) => {
 });
 app.post("/api/env/release-all", requireAdmin, async (_req, res) => {
   for (const f of Object.keys(world.overrides)) await setEnv(f, null, "human", "release all");
+  for (const [room, pins] of Object.entries(world.snap.roomOverrides ?? {})) for (const f of Object.keys(pins)) await setEnv(f, null, "human", "release all", { room });
   res.json(envView());
 });
 app.get("/api/env/history", async (req, res) => {

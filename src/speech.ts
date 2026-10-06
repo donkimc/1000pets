@@ -3,6 +3,8 @@
 import { normAngle } from "./geometry.js";
 import { VISION_HALF_ANGLE, VISION_RANGE } from "./sensors.js";
 import type { PetState } from "./pet.js";
+import type { Layout } from "./layout.js";
+import { crossings } from "./acoustics.js";
 
 export const PET_VOICE_RANGE = 300;
 export const HUMAN_VOICE_RANGE = 350;
@@ -28,10 +30,18 @@ export interface Utterance {
 }
 
 /** Pets within `range` of the speaker (the speaker itself excluded). */
-export function inEarshot(pets: PetState[], speaker: Speaker, range: number): PetState[] {
+export function inEarshot(pets: PetState[], speaker: Speaker, range: number, walls?: { layout: Layout; shut: readonly string[] }): PetState[] {
+  // A wall or shut door between them makes the voice carry a third as far.
+  const reach = (p: PetState) => (walls && crossings(walls.layout, p, speaker, walls.shut) > 0 ? range / 3 : range);
   return pets
-    .filter((p) => !(speaker.kind === "pet" && p.id === speaker.id) && Math.hypot(p.x - speaker.x, p.y - speaker.y) <= range)
+    .filter((p) => !(speaker.kind === "pet" && p.id === speaker.id) && Math.hypot(p.x - speaker.x, p.y - speaker.y) <= reach(p))
     .sort((a, b) => Math.hypot(a.x - speaker.x, a.y - speaker.y) - Math.hypot(b.x - speaker.x, b.y - speaker.y));
+}
+
+/** Whether the listener can see the speaker: in front of it, within sight. Only then can it tell who is talking. */
+export function canSee(listener: PetState, speaker: Speaker): boolean {
+  const dx = speaker.x - listener.x, dy = speaker.y - listener.y;
+  return Math.abs(normAngle(Math.atan2(dy, dx) - listener.heading)) <= VISION_HALF_ANGLE && Math.hypot(dx, dy) <= VISION_RANGE;
 }
 
 /** How a listener perceives where a voice came from. It never learns who spoke from this alone. */

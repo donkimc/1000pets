@@ -1,5 +1,5 @@
 [
-  { "id": "pip",  "name": "Pip",  "color": "#3987e5", "traits": { "curiosity": 0.8, "social": 0.5, "caution": 0.2, "patience": 0.4 }, "start": { "x": 220, "y": 300 } },
-  { "id": "moss", "name": "Moss", "color": "#d95926", "traits": { "curiosity": 0.3, "social": 0.4, "caution": 0.8, "patience": 0.8 }, "start": { "x": 520, "y": 540 } },
-  { "id": "coco", "name": "Coco", "color": "#199e70", "traits": { "curiosity": 0.5, "social": 0.8, "caution": 0.4, "patience": 0.5 }, "start": { "x": 760, "y": 400 } }
+  {"id": "pip", "name": "Pip", "color": "#3987e5", "traits": {"curiosity": 0.8, "social": 0.5, "caution": 0.2, "patience": 0.4}, "start": {"x": 220, "y": 300}, "voice": {"id": "af_sky", "speed": 1.08, "pitch": 1.35}},
+  {"id": "moss", "name": "Moss", "color": "#d95926", "traits": {"curiosity": 0.3, "social": 0.4, "caution": 0.8, "patience": 0.8}, "start": {"x": 520, "y": 540}, "voice": {"id": "bm_george", "speed": 0.92, "pitch": 0.7}},
+  {"id": "coco", "name": "Coco", "color": "#199e70", "traits": {"curiosity": 0.5, "social": 0.8, "caution": 0.4, "patience": 0.5}, "start": {"x": 760, "y": 400}, "voice": {"id": "af_bella", "speed": 1.0, "pitch": 1.1}}
 ]
