@@ -32,6 +32,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
 const DATA_DIR = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
+// Resuming the simulation needs this password (pausing never does). It is only there so a restart or a stranger cannot start the world and spend model calls:
+// plain text, no accounts, no lockout. Set RESUME_PASSWORD to something else, or to nothing at all to switch it off.
+const RESUME_PASSWORD = process.env.RESUME_PASSWORD ?? "1234";
+// A hosted copy never starts running by itself. (Railway sets one of these; START_PAUSED=off overrides, START_PAUSED=on forces it anywhere.)
+const HOSTED = !!(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
 const RUN_ID = process.env.RUN_ID ?? "main";
 const SEED = Number(process.env.SEED ?? 12345);
 
@@ -146,7 +151,7 @@ async function loadSession() {
   clock = new SimClock(savedClock?.simMs ?? 0);
   if (savedClock && (SPEEDS as readonly number[]).includes(savedClock.speed)) clock.speed = savedClock.speed;
   // A paused world stays paused across restarts and deploys (it used to come back running and spend model calls). START_PAUSED=on makes every start paused.
-  if (process.env.START_PAUSED === "on" || savedClock?.paused) clock.setPaused(true);
+  if (process.env.START_PAUSED === "on" || (HOSTED && process.env.START_PAUSED !== "off") || savedClock?.paused) clock.setPaused(true);
   // A new run lives in the house. A run saved in the old single room stays there, unless LAYOUT=house moves it into the house.
   const layout = LAYOUTS[process.env.LAYOUT ?? savedWorld?.layoutId ?? (savedWorld ? "legacy" : "house")] ?? HOUSE;
   world = new World(SEED, savedWorld ?? undefined, layout);
@@ -170,7 +175,7 @@ async function loadSession() {
 await loadSession();
 
 function status() {
-  return { runId: RUN_ID, simTimeMs: clock.simTimeMs, ...clock.parts, speed: clock.speed, paused: clock.paused };
+  return { runId: RUN_ID, simTimeMs: clock.simTimeMs, ...clock.parts, speed: clock.speed, paused: clock.paused, resumeNeedsPassword: !!RESUME_PASSWORD };
 }
 
 function petView() {
@@ -311,7 +316,12 @@ app.post("/api/speed", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/pause", requireAdmin, async (req, res) => {
-  clock.setPaused(Boolean(req.body?.paused));
+  const pause = Boolean(req.body?.paused);
+  if (!pause && RESUME_PASSWORD && String(req.body?.password ?? "") !== RESUME_PASSWORD) {
+    res.status(403).json({ error: "wrong password" });
+    return;
+  }
+  clock.setPaused(pause);
   await store.append("events", { type: clock.paused ? "paused" : "resumed", detail: "", ...clock.parts });
   res.json(status());
 });

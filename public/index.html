@@ -246,7 +246,7 @@ function render() {
   if (!state) return;
   $("time").textContent = `Day ${state.day} · ${pad(state.hour)}:${pad(state.minute)}:${pad(state.second || 0)}`;
   $("meta").textContent = `${state.speed}× speed${state.paused ? " · paused" : ""}`;
-  $("pause").textContent = state.paused ? "Resume" : "Pause";
+  $("pause").textContent = state.paused ? (state.resumeNeedsPassword ? "Resume (password)" : "Resume") : "Pause";
   document.querySelectorAll("#speeds button").forEach((b) => {
     const on = Number(b.dataset.s) === state.speed;
     b.classList.toggle("bg-accent", on); b.classList.toggle("text-emerald-950", on);
@@ -528,7 +528,17 @@ for (const s of SPEEDS) {
   b.onclick = () => post("/api/speed", { speed: s });
   $("speeds").appendChild(b);
 }
-$("pause").onclick = () => post("/api/pause", { paused: !(state && state.paused) });
+// Resuming asks for the password (the page remembers it for this tab once it has been right).
+$("pause").onclick = async () => {
+  const resume = !!(state && state.paused);
+  if (!resume) return post("/api/pause", { paused: true });
+  let password = "";
+  try { password = sessionStorage.getItem("resumePw") || ""; } catch { /* private mode */ }
+  if (state.resumeNeedsPassword && !password) { password = prompt("Password to resume the simulation") || ""; if (!password) return; }
+  const r = await fetch("/api/pause", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paused: false, password }) });
+  if (r.status === 403) { try { sessionStorage.removeItem("resumePw"); } catch { /* private mode */ } $("meta").textContent = "Wrong password: the simulation stays paused."; return; }
+  if (r.ok) { try { if (password) sessionStorage.setItem("resumePw", password); } catch { /* private mode */ } state = { ...state, ...(await r.json()) }; render(); }
+};
 
 Promise.all([fetch("/api/status").then((r) => r.json()), fetch("/api/world").then((r) => r.json()), fetch("/api/events?limit=40").then((r) => r.json())])
   .then(([s, w, evs]) => { layout = w.layout; state = { ...s, env: w.env, rooms: w.rooms, doors: w.doors, sunPatch: w.sunPatch, sunPatches: w.sunPatches, pets: w.pets, human: w.human, teacher: w.teacher }; evs.reverse().forEach((e) => addEvent(e, false)); render(); });

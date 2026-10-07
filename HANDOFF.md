@@ -31,7 +31,8 @@ Production build, as Railway runs it: `npm run build && npm start`.
 | `S2_INTERVAL_SEC` | 70 | Real seconds between a pet's slow thoughts (randomised 0.8-1.3x), counted from when the last one finished. A local CPU model needs about 150 |
 | `DATA_DIR` | `./data` | Where JSON logs and snapshots are written (`/data` volume on Railway) |
 | `SEED` | 12345 | World and pet random seed |
-| `START_PAUSED` | off | Set to `on` and every start (restart, deploy) begins paused, so a hosted copy spends no model calls until you press Resume. Without it, a pause you set is saved and kept across restarts |
+| `RESUME_PASSWORD` | 1234 | Resuming the simulation asks for this (pausing never does), so a restart or a stranger cannot start the world and spend model calls. Plain text and no lockout: it is a latch, not security. Set it to something else, or to nothing (`RESUME_PASSWORD=`) to switch it off |
+| `START_PAUSED` | on when hosted (Railway), otherwise off | `on` makes every start begin paused anywhere, `off` lets a hosted copy start running. Whatever the setting, a pause you set is saved and kept across restarts |
 | `LAYOUT` | house (new runs), the saved plan (old runs) | Floor plan: `house` (4 rooms) or `legacy` (the original single room). A run saved in the single room stays there unless you set `LAYOUT=house`, which moves it into the house (pets start in the living room). Or start a new run with `RUN_ID=house` |
 | `RUN_ID` | main | Folder name under `DATA_DIR/runs/` |
 | `ADMIN_TOKEN` | none | If set, speed/pause/add-pet endpoints need header `x-admin-token` (the page has no field for it yet) |
