@@ -167,3 +167,17 @@ test("a claim belongs to whoever the pet could see saying it, and to nobody if t
   await wait(1300);
   assert.equal(b.pip.mind.claims[0].fromKey, undefined, "an unseen voice is nobody in particular");
 });
+
+test("a pet's question to the Teacher is spoken aloud, so the chat shows both sides", async () => {
+  const { conv, store, pip, moss } = await setup(() => "{}");
+  const u = await conv.petAsksTeacher(pip, "How long does a full charge take?");
+  assert.ok(u, "it was said");
+  assert.equal(u!.to.kind, "teacher");
+  assert.equal(u!.trace.kind, "question");
+  assert.ok(u!.heardBy.includes(moss.id), "a neighbour in earshot heard it too");
+  const comms = await store.readLog<any>("comms");
+  assert.equal(comms[comms.length - 1].from.id, "pip");
+  pip.mode = "sleeping";
+  assert.equal(await conv.petAsksTeacher(pip, "Anyone there?"), null, "a sleeping pet asks nothing aloud");
+  assert.equal(await conv.petAsksTeacher(moss, '{"reply": "x"}'), null, "structured text is never spoken");
+});

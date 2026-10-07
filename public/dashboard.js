@@ -89,6 +89,59 @@
     }).join("");
   }
 
+  // ---- rooms: where the pets are and have been (only when the house has more than one room) ----
+  const FLOOR_COLOR = { wood: "#b08d57", tile: "#5fa8c0", carpet: "#a58ad0", stone: "#8b95a1" };
+  const ROOM_ORDER = (d) => d.rooms.map((r) => r.id);
+  const roomColor = (d, id) => FLOOR_COLOR[(d.rooms.find((r) => r.id === id) || {}).floor] || "#667";
+  const roomName = (d, id) => (d.rooms.find((r) => r.id === id) || { name: id }).name;
+
+  function renderRooms(d, rows) {
+    const show = d.rooms && d.rooms.length > 1;
+    $("rooms-dash").classList.toggle("hidden", !show);
+    if (!show) return;
+    $("room-now").innerHTML = `<div class="grid grid-cols-2 gap-2">${d.rooms.map((r) => {
+      const total = d.pets.reduce((a, p) => a + Object.values((p.stats.roomSec || {})).reduce((x, y) => x + y, 0), 0) || 1;
+      const here = d.pets.reduce((a, p) => a + ((p.stats.roomSec || {})[r.id] || 0), 0);
+      return `<div class="bg-ink/60 rounded-lg p-3" style="border-left:4px solid ${roomColor(d, r.id)}"><div class="font-semibold text-sm">${esc(r.name)}</div>` +
+        `<div class="text-xs text-slate-300 min-h-4">${r.pets.length ? esc(r.pets.join(", ")) : '<span class="text-mute">nobody here</span>'}</div>` +
+        `<div class="text-xs text-mute mt-1">${r.indoorTemp.toFixed(1)} °C · lamp ${r.lampOn ? "on" : "off"} · heater ${r.heaterOn ? "on" : "off"} · curtain ${r.curtainOpen ? "open" : "closed"}</div>` +
+        `<div class="text-xs text-mute">${Math.round((here / total) * 100)}% of all pet time</div></div>`;
+    }).join("")}</div>`;
+    const legend = `<div class="flex flex-wrap gap-x-3 gap-y-1 mb-2 text-xs text-slate-300">${d.rooms.map((r) => `<span class="inline-flex items-center gap-1"><span class="inline-block w-2.5 h-2.5 rounded-sm" style="background:${roomColor(d, r.id)}"></span>${esc(r.name)}</span>`).join("")}</div>`;
+    $("room-time").innerHTML = legend + d.pets.map((p) => {
+      const rs = p.stats.roomSec || {}, total = Object.values(rs).reduce((a, b) => a + b, 0) || 1;
+      const bar = ROOM_ORDER(d).map((id) => `<div title="${esc(roomName(d, id))} ${Math.round(((rs[id] || 0) / total) * 100)}%" style="width:${((rs[id] || 0) / total) * 100}%;background:${roomColor(d, id)}"></div>`).join("");
+      const charge = ROOM_ORDER(d).filter((id) => (p.stats.chargeSec || {})[id]).map((id) => `${esc(roomName(d, id))} ${fmtSim(p.stats.chargeSec[id])}`).join(" · ");
+      return `<div class="mb-3"><div class="flex items-center gap-1.5 mb-1"><span class="inline-block w-2.5 h-2.5 rounded-full" style="background:${p.color}"></span><span class="font-semibold text-sm">${esc(p.name)}</span><span class="text-xs text-mute">${p.stats.crossings || 0} room changes · ${p.stats.doorsOpened || 0} doors opened by itself</span></div>` +
+        `<div class="flex h-3 rounded overflow-hidden bg-slate-700/60">${bar}</div>` +
+        `<div class="flex flex-wrap gap-x-3 text-xs text-slate-300 mt-1">${ROOM_ORDER(d).map((id) => `<span>${esc(roomName(d, id))} ${Math.round(((rs[id] || 0) / total) * 100)}%</span>`).join("")}</div>` +
+        `<div class="text-xs text-mute">${charge ? "Charged in: " + charge : "no charging recorded yet"}</div></div>`;
+    }).join("");
+    // a strip per pet: one block per sample, coloured by the room it was in
+    const n = rows.length;
+    if (n < 2) { $("room-strip").innerHTML = '<div class="text-sm text-mute py-4 text-center">Collecting data… a point is recorded every 15 simulated minutes.</div>'; }
+    else {
+      const W = 340, rowH = 16, gap = 8, L = 46, H = d.pets.length * (rowH + gap) + 16, bw = (W - L - 4) / n;
+      let svg = `<svg viewBox="0 0 ${W} ${H}" class="w-full h-auto" role="img" aria-label="Which room each pet was in over time">`;
+      d.pets.forEach((p, i) => {
+        const y = i * (rowH + gap);
+        svg += `<text x="${L - 6}" y="${y + rowH - 4}" text-anchor="end" font-size="10" fill="${p.color}">${esc(p.name)}</text>`;
+        rows.forEach((r, k) => {
+          const q = r.pets.find((x) => x.id === p.id), room = q && q.room;
+          svg += `<rect x="${(L + k * bw).toFixed(1)}" y="${y}" width="${Math.max(0.6, bw + 0.2).toFixed(1)}" height="${rowH}" fill="${room ? roomColor(d, room) : "#2a323b"}"><title>${esc(p.name)} · ${when(r)} · ${room ? esc(roomName(d, room)) : "?"}</title></rect>`;
+        });
+      });
+      svg += `<text x="${L}" y="${H - 3}" font-size="9" fill="${MUTE}">${when(rows[0])}</text><text x="${W - 4}" y="${H - 3}" text-anchor="end" font-size="9" fill="${MUTE}">${when(rows[n - 1])}</text></svg>`;
+      $("room-strip").innerHTML = svg;
+    }
+    const withTemps = rows.filter((r) => r.env && r.env.rooms);
+    lineChart($("chart-roomtemp"), {
+      title: "Temperature by room", yFmt: (v) => v.toFixed(1) + "°",
+      series: [...d.rooms.map((r) => ({ name: r.name, color: roomColor(d, r.id) })), { name: "Outdoor", color: ENV.outdoor }],
+      rows: withTemps.map((r) => ({ x: r.simMinute, label: when(r), values: [...d.rooms.map((rm) => r.env.rooms[rm.id] ?? null), r.env.outdoorTemp] })),
+    });
+  }
+
   function renderSpeech(d) {
     const c = d.comms;
     $("speech").innerHTML = `<div class="grid grid-cols-2 gap-2 mb-3">${[
@@ -179,7 +232,7 @@
     dash = d;
     const sel = $("needs-pet");
     if (sel.options.length !== d.pets.length) { sel.innerHTML = d.pets.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join(""); }
-    renderKpis(d, llm); renderCharts(d, rows); renderActivity(d); renderSpeech(d); renderStorage(d);
+    renderKpis(d, llm); renderCharts(d, rows); renderActivity(d); renderRooms(d, rows); renderSpeech(d); renderStorage(d);
     chips($("range"), [[6, "6 h"], [24, "24 h"], [168, "7 days"], [720, "30 days"]], rangeHours, (v) => { rangeHours = Number(v); loadDash(); });
     chips($("tpet"), [["", "All pets"], ...d.pets.map((p) => [p.id, p.name])], thoughtPet, (v) => { thoughtPet = v; loadDash(); });
     chips($("tsys"), [[0, "All"], [1, "S1 fast"], [2, "S2 slow"], [3, "S3 sleep"]], thoughtSys, (v) => { thoughtSys = Number(v); loadDash(); });

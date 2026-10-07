@@ -382,6 +382,10 @@ app.get("/api/dashboard", async (_req, res) => {
       id: p.id, name: p.name, color: p.color, energy: Math.round(p.energy), mode: p.mode, action: p.s1.action, stats: p.stats,
       beliefs: p.mind.beliefs.length, claims: p.mind.claims.length, intention: p.mind.intention?.goal ?? null,
     })),
+    rooms: world.layout.rooms.map((r) => ({
+      id: r.id, name: r.name, floor: r.floor, ...world.roomEnv(r.id),
+      pets: sim.pets.filter((p) => world.roomIdAt(p.x, p.y) === r.id).map((p) => p.name),
+    })),
     comms: {
       total: comms.length,
       fromHuman: comms.filter((u) => u.from.kind === "human").length,

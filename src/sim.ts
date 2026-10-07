@@ -95,6 +95,7 @@ export class Simulation {
       p.odo ??= { x: 0, y: 0 };
       p.mind.sensed.near ??= []; // saves from before the near-field sense
       p.stats ??= newStats();
+      p.stats.roomSec ??= {}; p.stats.chargeSec ??= {}; p.stats.crossings ??= 0; p.stats.doorsOpened ??= 0; // saves from before rooms
       // The config file is the source of truth for names, colours and traits of the default pets.
       const def = roster.find((d) => d.id === p.id);
       if (def && !p.brainTraits) Object.assign(p, { name: def.name, color: def.color, traits: def.traits });
@@ -113,8 +114,8 @@ export class Simulation {
     const r = (v: number) => Math.round(v * 100) / 100;
     return {
       simMinute: m, day: Math.floor(m / 1440) + 1, hour: Math.floor((m % 1440) / 60), minute: m % 60,
-      pets: this.pets.map((p) => ({ id: p.id, surprise: takePeak(p), energy: r(p.energy), curiosity: r(p.drives.curiosity), social: r(p.drives.social), rest: r(p.drives.rest), mode: p.mode })),
-      env: { indoorTemp: env.indoorTemp, outdoorTemp: env.outdoorTemp, sun: env.sunIntensity, weather: env.weather },
+      pets: this.pets.map((p) => ({ id: p.id, room: this.world.roomIdAt(p.x, p.y), surprise: takePeak(p), energy: r(p.energy), curiosity: r(p.drives.curiosity), social: r(p.drives.social), rest: r(p.drives.rest), mode: p.mode })),
+      env: { indoorTemp: env.indoorTemp, outdoorTemp: env.outdoorTemp, sun: env.sunIntensity, weather: env.weather, rooms: Object.fromEntries(this.world.layout.rooms.map((r) => [r.id, this.world.roomEnv(r.id).indoorTemp])) },
       cum: this.pets.reduce((a, p) => ({ s1: a.s1 + p.stats.s1Thoughts, s2: a.s2 + p.stats.s2Thoughts, spoke: a.spoke + p.stats.spoke }), { s1: 0, s2: 0, spoke: 0 }),
     };
   }
@@ -342,6 +343,7 @@ export class Simulation {
       }
       if (nearest) {
         const res = this.world.openDoor(nearest.id, this.simSec);
+        if (res === "opened") p.stats.doorsOpened!++;
         this.note(p, res === "locked" ? "pushed a shut door but it would not open" : "pushed a door open");
       }
     }
@@ -409,6 +411,11 @@ export class Simulation {
     p.s1.action = dec.action;
     p.s1.lastReason = dec.reason;
     p.stats.actionSec[dec.action] = (p.stats.actionSec[dec.action] ?? 0) + DT;
+    const here = this.world.roomIdAt(p.x, p.y);
+    p.stats.roomSec![here] = (p.stats.roomSec![here] ?? 0) + DT;
+    if (p.mode === "charging" || p.chargeRate > 0.5) p.stats.chargeSec![here] = (p.stats.chargeSec![here] ?? 0) + DT;
+    if (p.room && p.room !== here) p.stats.crossings!++;
+    p.room = here;
 
     const tod = obs.timeOfDay;
     if (p.mode !== prevMode && (p.mode === "dormant" || prevMode === "dormant" || p.mode === "sleeping" || prevMode === "sleeping")) {

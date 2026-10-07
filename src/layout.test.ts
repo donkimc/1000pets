@@ -81,5 +81,5 @@ test("walls survive the builder for any custom plan: a gap is exactly the door w
   const L: Layout = HOUSE;
   const wallsOnLine = L.walls.filter((w) => w.x === 1000 - WALL_T / 2 && w.y < 700).sort((p, q) => p.y - q.y);
   assert.equal(wallsOnLine.length, 2);
-  assert.equal(wallsOnLine[1].y - (wallsOnLine[0].y + wallsOnLine[0].h), 90);
+  assert.equal(wallsOnLine[1].y - (wallsOnLine[0].y + wallsOnLine[0].h), 120);
 });

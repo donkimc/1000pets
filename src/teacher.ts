@@ -81,7 +81,10 @@ export interface EnvControl {
   set(field: string, value: unknown, source: "teacher", reason: string, scope?: { room?: string; door?: string }): Promise<{ field: string; from: unknown; to: unknown; mode: "pin" | "auto" }>;
   recent(limit: number): Promise<any[]>;
 }
-export interface TeacherSpeech { teacherSays(to: Target, text: string, trace: Record<string, unknown>): Promise<Utterance> }
+export interface TeacherSpeech {
+  teacherSays(to: Target, text: string, trace: Record<string, unknown>): Promise<Utterance>;
+  petAsksTeacher?(p: PetState, text: string): Promise<unknown>; // a pet's question is spoken aloud too, so the chat shows both sides
+}
 export interface TeacherLlm { enabled: boolean; complete(messages: ChatMessage[], opts?: CompleteOpts): Promise<LlmResult> }
 
 export interface TeacherConfig {
@@ -317,6 +320,7 @@ export class Teacher implements TeacherHook {
     p.mind.episodes.push(`D${Math.floor(nowMin / DAY) + 1} ${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")} asked the Teacher: "${text.trim().slice(0, 100)}"`);
     if (p.mind.episodes.length > 14) p.mind.episodes.shift();
     void this.log("question", { pet: p.id, text: text.trim().slice(0, 120) });
+    void this.speech.petAsksTeacher?.(p, text.trim().slice(0, 120))?.catch?.(() => {});
   }
 
   // ----- the tick -----

@@ -58,6 +58,7 @@ export interface PetState {
   drives: Drives;
   bumped: boolean;
   anchors?: Record<string, { x: number; y: number }>; // where it reckoned each charger pad to be (by its hum), to correct drift
+  room?: string; // the room it was in at the last tick (to count crossings)
   inDoorway?: boolean; // standing in a doorway right now (to note each passing once)
   moved?: { x: number; y: number }; // how far the body actually moved in the last tick (what its odometry measures)
   touch: "wall" | "door" | "object" | "pet" | "human" | "teacher" | "pad" | null;
@@ -119,10 +120,14 @@ export interface PetStats {
   s2Thoughts: number;
   spoke: number;
   heard: number;
+  roomSec?: Record<string, number>; // simulated seconds spent in each room
+  chargeSec?: Record<string, number>; // ... of which charging, by room
+  crossings?: number; // times it went from one room to another
+  doorsOpened?: number; // doors it pushed open
 }
 
 export function newStats(): PetStats {
-  return { actionSec: {}, s1Thoughts: 0, s2Thoughts: 0, spoke: 0, heard: 0 };
+  return { actionSec: {}, s1Thoughts: 0, s2Thoughts: 0, spoke: 0, heard: 0, roomSec: {}, chargeSec: {}, crossings: 0, doorsOpened: 0 };
 }
 
 /** Series colours validated for dark charts (colour follows the entity: a pet keeps its colour everywhere). */

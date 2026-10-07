@@ -49,7 +49,8 @@
   <div class="relative" id="view3d-stage">
     <canvas id="view3d" class="w-full block rounded-lg bg-black" style="aspect-ratio:4/3;touch-action:none"></canvas>
     <canvas id="minimap" width="400" height="280" class="absolute left-2 bottom-2 rounded-md border border-line bg-black/60 cursor-pointer" style="width:34%;touch-action:none"></canvas>
-    <button id="mm-big" class="absolute right-2 top-2 px-2 py-1 rounded bg-slate-800/80 text-xs" title="Bigger map">⤢ map</button>
+    <div class="absolute right-2 top-2 flex gap-1"><button id="mm-big" class="px-2 py-1 rounded bg-slate-800/80 text-xs" title="Bigger map">⤢ map</button><button id="mm-hide" class="px-2 py-1 rounded bg-slate-800/80 text-xs" title="Hide the minimap">− hide</button></div>
+    <button id="mm-show" class="hidden absolute left-2 bottom-2 px-2 py-1 rounded bg-slate-800/80 text-xs">▣ map</button>
     <div id="pad" class="absolute right-3 bottom-3 w-28 h-28 rounded-full bg-slate-700/50 border border-line select-none" style="touch-action:none">
       <div id="knob" class="absolute w-10 h-10 rounded-full bg-accent/80" style="left:34px;top:34px"></div>
     </div>
@@ -184,6 +185,12 @@
 <section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Sunlight</h2><div id="chart-sun"></div></section>
 
 <section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">What each pet spends its time on</h2><div id="activity"></div></section>
+<div id="rooms-dash" class="hidden">
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Rooms right now</h2><div id="room-now"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Where each pet spends its time</h2><div id="room-time"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Who was where <span class="normal-case">(each block is 15 simulated minutes; the colour is the room)</span></h2><div id="room-strip"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Temperature by room</h2><div id="chart-roomtemp"></div></section>
+</div>
 <section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Speech</h2><div id="speech"></div></section>
 
 <section class="bg-panel rounded-xl p-4 mb-3">

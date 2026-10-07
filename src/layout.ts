@@ -165,10 +165,10 @@ export const HOUSE: Layout = buildLayout({
     { id: "study", name: "Study", x: 1000, y: 700, w: 1000, h: 700, floor: "stone" },
   ],
   doors: [
-    { id: "door-living-kitchen", a: "living", b: "kitchen", orient: "v", line: 1000, at: 450, width: 90 },
-    { id: "door-living-bedroom", a: "living", b: "bedroom", orient: "h", line: 700, at: 700, width: 90 },
-    { id: "door-kitchen-study", a: "kitchen", b: "study", orient: "h", line: 700, at: 1500, width: 90 },
-    { id: "door-bedroom-study", a: "bedroom", b: "study", orient: "v", line: 1000, at: 1100, width: 90 },
+    { id: "door-living-kitchen", a: "living", b: "kitchen", orient: "v", line: 1000, at: 450, width: 120 },
+    { id: "door-living-bedroom", a: "living", b: "bedroom", orient: "h", line: 700, at: 700, width: 120 },
+    { id: "door-kitchen-study", a: "kitchen", b: "study", orient: "h", line: 700, at: 1500, width: 120 },
+    { id: "door-bedroom-study", a: "bedroom", b: "study", orient: "v", line: 1000, at: 1100, width: 120 },
   ],
   objects: [
     // living room: the original room, with its outside door replaced by a door to the bedroom

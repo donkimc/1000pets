@@ -78,8 +78,10 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
   if (nowSec < s1.holdUntil) return stay(s1.holdAction as Action, "staying with it a little longer");
 
   // 2b. A doorway the pet is heading through on purpose (after a tone, or out of curiosity). A shut door is pushed open instead of avoided.
-  const heading = nowSec - (s1.followedAt ?? -1e9) < 15 || nowSec < (s1.doorGoalUntil ?? 0);
-  const door = obs.vision.find((v) => v.door && Math.abs(v.bearing) < 0.5 && v.distance < 110);
+  const door = obs.vision.find((v) => v.door && Math.abs(v.bearing) < (v.distance < 70 ? 1 : 0.5) && v.distance < 110); // up close a doorway is seen off to one side
+  let heading = nowSec - (s1.followedAt ?? -1e9) < 15 || nowSec < (s1.doorGoalUntil ?? 0);
+  // A pet that finds itself walking up to a shut door usually pushes it open rather than turning away, curious ones more often.
+  if (door && !heading && door.door === "shut" && Math.abs(door.bearing) < (door.distance < 70 ? 0.9 : 0.35) && door.distance < 80 && rng.chance(0.6 + 0.35 * t.curiosity - 0.3 * t.caution)) { s1.doorGoalUntil = nowSec + 30; heading = true; }
   if (door && heading) {
     if (door.door === "shut") {
       if (door.distance > 42) return { action: "explore_door", reason: "heading for a shut door", forward: 0.5, turn: clamp(door.bearing, -MAX_TURN, MAX_TURN) };

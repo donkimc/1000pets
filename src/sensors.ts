@@ -16,7 +16,7 @@ const OBJECT_HUE: Record<string, number> = {
 };
 export const DOOR_SHUT_HUE = 25; // a shut door looks like wood
 export const DOOR_OPEN_HUE = 215; // an open doorway shows the dark or the room beyond
-export const DOOR_SIZE = 90;
+export const DOOR_SIZE = 120;
 
 export interface Detection {
   category: "static" | "moving";

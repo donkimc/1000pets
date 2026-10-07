@@ -249,3 +249,42 @@ test("an old save with no voices gets them on load", () => {
   const again = new Simulation(new World(1, undefined, HOUSE), 1, roster, snap);
   assert.ok(again.pets.every((p) => p.voice?.id), "voices restored from the roster");
 });
+
+test("a pet that walks up to a shut door usually pushes it open instead of turning away", () => {
+  let opened = 0;
+  for (let seed = 1; seed <= 12; seed++) {
+    const sim = house(seed);
+    const [pip, moss, coco] = sim.pets;
+    sim.human.x = 100; sim.human.y = 100; sim.teacher.x = 300; sim.teacher.y = 650;
+    place(moss, 100, 650, 0); place(coco, 100, 600, 0);
+    place(pip, 880, 450, 0); // 114 from the kitchen door, walking toward it
+    pip.s1.holdUntil = 0; pip.drives.rest = 0; pip.drives.social = 0; pip.drives.curiosity = 0; pip.energy = 80;
+    for (let s = 5; s <= 90 && !sim.world.isDoorOpen("door-living-kitchen"); s += 5) { pip.heading = 0; sim.step(s * 1000); }
+    if (sim.world.isDoorOpen("door-living-kitchen")) opened++;
+  }
+  assert.ok(opened >= 9, `opened in ${opened} of 12 runs`);
+});
+
+test("doorways are wide enough to walk through without aiming", () => {
+  for (const d of HOUSE.doors) assert.ok(d.width >= 120, `${d.id} is ${d.width} wide`);
+  const sim = house();
+  sim.human.x = 900; sim.human.y = 420; // well off the centre line of a 120 wide doorway
+  for (let i = 0; i < 40 && sim.human.x < 1030; i++) sim.moveHuman(1, 0, 0.1);
+  assert.ok(sim.human.x > 1030, `got through (stopped at ${Math.round(sim.human.x)})`);
+});
+
+test("each pet's time per room, charging per room, room changes and doors opened are counted", () => {
+  const sim = house(3);
+  for (let s = 5; s <= 6 * 3600; s += 5) sim.step(s * 1000);
+  for (const p of sim.pets) {
+    const rooms = Object.values(p.stats.roomSec!).reduce((a, b) => a + b, 0);
+    const actions = Object.values(p.stats.actionSec).reduce((a, b) => a + b, 0);
+    assert.equal(rooms, actions, "every observed second is in some room");
+    assert.ok(Object.keys(p.stats.roomSec!).every((id) => HOUSE.rooms.some((r) => r.id === id)));
+    assert.ok(Object.values(p.stats.chargeSec!).reduce((a, b) => a + b, 0) <= rooms);
+  }
+  assert.ok(sim.pets.some((p) => p.stats.crossings! > 0), "someone changed rooms");
+  const m = sim.metrics();
+  assert.ok(m.pets.every((p) => HOUSE.rooms.some((r) => r.id === p.room)), "the 15-minute samples record each pet's room");
+  assert.deepEqual(Object.keys(m.env.rooms).sort(), HOUSE.rooms.map((r) => r.id).sort());
+});

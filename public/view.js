@@ -48,6 +48,14 @@ if (w3) {
 
   // the minimap, bigger or smaller; full screen
   $("mm-big").onclick = () => $("minimap").classList.toggle("big");
+  const showMap = (on) => {
+    $("minimap").style.display = on ? "" : "none"; $("mm-big").style.display = on ? "" : "none"; $("mm-hide").style.display = on ? "" : "none";
+    $("mm-show").classList.toggle("hidden", on); if (!on) $("minimap").classList.remove("big");
+    try { localStorage.setItem("minimap", on ? "1" : "0"); } catch { /* private mode */ }
+  };
+  $("mm-hide").onclick = () => showMap(false);
+  $("mm-show").onclick = () => showMap(true);
+  try { if (localStorage.getItem("minimap") === "0") showMap(false); } catch { /* private mode */ }
   $("view-fs").onclick = () => {
     const wrap = $("view3d-wrap"), on = wrap.classList.toggle("fs");
     $("view-fs").textContent = on ? "Close" : "Full screen";

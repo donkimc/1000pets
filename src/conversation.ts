@@ -235,6 +235,13 @@ export class Conversation implements SpeechHook {
     });
   }
 
+  /** A pet asks the Teacher something (its slow thinking decided to). It is spoken aloud, to the Teacher, so anyone in earshot hears it and the chat shows the question before the answer. */
+  async petAsksTeacher(p: PetState, text: string): Promise<Utterance | null> {
+    const clean = cleanSpeech(text);
+    if (!clean || looksLikeJson(clean) || p.mode === "sleeping" || p.mode === "dormant") return null;
+    return this.deliver(p, { kind: "teacher" }, clean, { kind: "question", asked: "the Teacher", intention: p.mind.intention?.goal ?? null, doing: p.s1.action, drives: { ...p.drives } });
+  }
+
   /** The teacher speaks (a lesson or an answer). Heard only by pets in earshot; each remembers it as a claim, not a fact. */
   async teacherSays(to: Target, text: string, trace: Record<string, unknown>): Promise<Utterance> {
     return this.deliver("teacher", to, text.replace(/\s+/g, " ").trim().slice(0, 420), { kind: "teacher", ...trace });
