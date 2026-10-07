@@ -26,6 +26,9 @@
     { f: "heaterOn", label: "Heater", kind: "bool", on: "on", off: "off" },
     { f: "beaconOn", label: "Charger hum", kind: "bool", on: "on", off: "off" },
   ];
+  const ROOM_FIELDS = ["indoorTemp", "curtainOpen", "lampOn", "heaterOn"];
+  let envRoom = ""; // "" = the world (and the first room); otherwise one room
+  let envCur = null;
   let envFilter = "";
   let envBuilt = false;
   const fieldLabel = Object.fromEntries(FIELDS.map((x) => [x.f, x.label]));
@@ -56,7 +59,7 @@
       }
       try {
         el("env-note").textContent = "";
-        await api("POST", "/api/env", { field: f, value });
+        await api("POST", "/api/env", { field: f, value, ...(roomScoped() ? { room: envRoom } : {}) });
         envDirty.delete(f);
         await loadEnv(true);
       } catch (err) { el("env-note").textContent = err.message; }
@@ -68,13 +71,33 @@
     envBuilt = true;
   }
 
+  const roomScoped = () => !!envRoom && envCur && envCur.rooms && envCur.rooms.length > 1 && envCur.rooms[0].id !== envRoom;
+
   const envDirty = new Set(); // controls the person is editing: do not overwrite them on refresh
 
   async function loadEnv() {
     if (!envBuilt) buildEnv();
     const [cur, hist] = await Promise.all([api("GET", "/api/env"), api("GET", `/api/env/history?limit=150${envFilter ? "&source=" + envFilter : ""}`)]);
+    envCur = cur;
+    // Which room? (only when the house has more than one)
+    const multi = cur.rooms && cur.rooms.length > 1;
+    el("env-scope").classList.toggle("hidden", !multi);
+    if (multi) {
+      el("env-scope").innerHTML = `<div class="flex items-center gap-2"><span class="text-xs text-mute">Change</span><select id="env-room" class="bg-slate-700 rounded-lg px-2 py-2 text-sm">${cur.rooms.map((r, i) => `<option value="${i ? r.id : ""}"${(i ? r.id : "") === envRoom ? " selected" : ""}>${esc(i ? r.name : r.name + " and the weather")}</option>`).join("")}</select><span class="text-xs text-mute">Weather, sun and the front door apply to the whole world.</span></div>`;
+      el("env-room").onchange = (e) => { envRoom = e.target.value; envDirty.clear(); loadEnv(); };
+      const doors = cur.doors || [];
+      el("env-doors").classList.remove("hidden");
+      el("env-doors").innerHTML = `<div class="text-xs uppercase tracking-wider text-mute mb-1">Doors <span class="normal-case">(pets open any door that is not locked)</span></div>` + doors.map((d) => {
+        const name = (id) => (cur.rooms.find((r) => r.id === id) || { name: id }).name;
+        return `<div class="flex items-center gap-2 text-sm"><span class="flex-1">${esc(name(d.a))} ↔ ${esc(name(d.b))}</span><span class="text-xs ${d.locked ? "text-amber-300" : "text-mute"}">${d.locked ? "locked" : d.open ? "open" : "shut"}</span><button data-lock="${d.id}" data-to="${d.locked ? "false" : "true"}" class="${BTN}">${d.locked ? "Unlock" : "Lock"}</button></div>`;
+      }).join("");
+      el("env-doors").onclick = async (e) => { const b = e.target.closest("[data-lock]"); if (!b) return; try { await api("POST", "/api/env", { field: "doorLocked", door: b.dataset.lock, value: b.dataset.to === "true" }); await loadEnv(); } catch (err) { el("env-note").textContent = err.message; } };
+    }
+    const scoped = roomScoped(), room = scoped ? cur.rooms.find((r) => r.id === envRoom) : null;
     for (const x of FIELDS) {
-      const v = cur.env[x.f], pinned = x.f in cur.overrides;
+      const row = el("env-controls").querySelector(`[data-row="${x.f}"]`);
+      if (row) row.style.display = scoped && !ROOM_FIELDS.includes(x.f) ? "none" : "";
+      const v = scoped && ROOM_FIELDS.includes(x.f) ? room[x.f] : cur.env[x.f], pinned = scoped && ROOM_FIELDS.includes(x.f) ? room.pinned.includes(x.f) : x.f in cur.overrides;
       el("env-controls").querySelector(`[data-cur="${x.f}"]`).innerHTML = `${esc(showVal(x, v))} ${pinned ? '<span title="pinned">📌</span>' : '<span class="text-mute">auto</span>'}`;
       const c = el("env-controls").querySelector(`[data-ctl="${x.f}"]`);
       if (!envDirty.has(x.f) && document.activeElement !== c) c.value = x.kind === "bool" ? String(!!v) : x.fromEnv ? x.fromEnv(v) : v;

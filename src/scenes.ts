@@ -14,7 +14,7 @@ export const SCENES_IN_PROMPT = 3;
 const SLICES = 11; // columns of the text-art view across the vision cone
 const LARGE = 100; // size at which a thing counts as large
 
-export interface SceneThing { category: "moving" | "static"; size: "small" | "large"; colour: string; distance: number; bearing: number }
+export interface SceneThing { category: "moving" | "static"; size: "small" | "large"; colour: string; distance: number; bearing: number; door?: "open" | "shut" }
 export interface SceneNear { category: "moving" | "static"; gap: number; bearing: number }
 
 export interface Scene {
@@ -26,7 +26,8 @@ export interface Scene {
   pose: { x: number; y: number } | null; // where, in the pet's own dead-reckoned frame; null if the frame is lost
   seen: SceneThing[]; // in front, nearest first
   near: SceneNear[]; // within reach, any direction
-  view: string; // text art, see renderView
+  view: string; // text art of what was in sight, see renderView
+  grid?: string[]; // a small top-down map of the ground around the pet, ahead is up: walls, doorways, furniture, bodies (see sensors.ts egoGrid)
   tone: { pitch: number; volume: number } | null; // a steady tone that was audible at the time
   light: number;
   temperature: number;
@@ -108,6 +109,7 @@ function placeWords(scene: Scene, now: { odo: { x: number; y: number }; heading:
 }
 
 function thingWords(t: SceneThing): string {
+  if (t.door) return t.door === "shut" ? "shut door" : "open doorway";
   return `${t.size} ${t.colour} ${t.category === "moving" ? "moving thing" : "still object"}`;
 }
 
@@ -163,7 +165,7 @@ function triggers(p: PetState, obs: Observation, w: SceneWatch): Trigger[] {
   else if (w.charge <= 0.01 && p.chargeRate > 0.01 && p.chargeRate < 0.5) t("sunpatch", "stood in a patch of sunlight that slowly charged me", 0.5, 900);
   if (p.mode === "dormant" && w.mode !== "dormant") t("dormant", "my battery ran out and I powered down", 1, 3600);
   else if (obs.energy < 25 && w.mode !== "dormant") t("lowbattery", "my battery was getting low", 0.7, 7200);
-  if (p.touch && p.touch !== "pad" && w.touch === null) t("bump", p.touch === "wall" ? "bumped into a wall" : p.touch === "object" ? "bumped into something still" : "bumped into something that moves", 0.3, 900);
+  if (p.touch && p.touch !== "pad" && w.touch === null) t("bump", p.touch === "wall" ? "bumped into a wall" : p.touch === "door" ? "bumped into a shut door" : p.touch === "object" ? "bumped into something still" : "bumped into something that moves", 0.3, 900);
   if (Math.abs(obs.light - w.light) >= 25) t(obs.light > w.light ? "brighter" : "darker", obs.light > w.light ? "the light suddenly got much brighter" : "the light suddenly got much darker", 0.6, 1200);
   if (obs.temperature - w.temperature >= 1.5) t("warmer", "it suddenly got warmer", 0.5, 900);
   else if (w.temperature - obs.temperature >= 1.5) t("colder", "it suddenly got colder", 0.4, 900);
@@ -177,7 +179,7 @@ function triggers(p: PetState, obs: Observation, w: SceneWatch): Trigger[] {
 /** A scene from the pet's current perception and body. */
 function buildScene(p: PetState, obs: Observation, nowSec: number, rng: Rng, kind: string, why: string, importance: number): Scene {
   const w = (p.watch ??= newWatch(obs));
-  const seen: SceneThing[] = obs.vision.slice(0, 5).map((v) => ({ category: v.category, size: v.size >= LARGE ? "large" : "small", colour: colourWord(v.hue), distance: v.distance, bearing: v.bearing }));
+  const seen: SceneThing[] = obs.vision.slice(0, 5).map((v) => ({ category: v.category, size: v.size >= LARGE ? "large" : "small", colour: colourWord(v.hue), distance: v.distance, bearing: v.bearing, ...(v.door ? { door: v.door } : {}) }));
   const near: SceneNear[] = obs.near.slice(0, 5).map((n) => ({ category: n.category, gap: n.gap, bearing: n.bearing }));
   return {
     id: `s${nowSec}-${++w.seq}`,
@@ -189,6 +191,7 @@ function buildScene(p: PetState, obs: Observation, nowSec: number, rng: Rng, kin
     seen,
     near,
     view: renderView(obs.vision, obs.near),
+    grid: obs.grid,
     tone: obs.tone ? { pitch: obs.tone.pitch, volume: obs.tone.volume } : null,
     light: obs.light,
     temperature: obs.temperature,
@@ -245,8 +248,29 @@ export function watchScenes(p: PetState, obs: Observation, nowSec: number, rng: 
 
 /** Dead reckoning: the pet integrates the distance it actually moved along its compass heading, with a little noise. */
 export function updateOdometry(p: PetState, dtSec: number, rng: Rng): void {
+  if (p.moved) { // measured movement (like wheel or optical-flow sensing): sliding along a wall is not mistaken for walking straight on
+    const k = 1 + (rng.next() - 0.5) * 0.06;
+    rng.next(); // (the heading noise of the older method, so a given seed still plays out the same way)
+    p.odo.x += p.moved.x * k;
+    p.odo.y += p.moved.y * k;
+    return;
+  }
   const stride = p.speed * dtSec * (1 + (rng.next() - 0.5) * 0.06);
   const heading = p.heading + (rng.next() - 0.5) * 0.04;
   p.odo.x += Math.cos(heading) * stride;
   p.odo.y += Math.sin(heading) * stride;
+}
+
+/**
+ * Dead reckoning drifts a little. Each charger pad hums at its own pitch, so standing on one is a landmark the pet can recognise:
+ * the first time it stands on a pad it notes where it is by its own reckoning, and every later visit pulls its reckoning back
+ * to that, unless it is so far off that it must have been lost, in which case that pad's note is replaced.
+ */
+export function closeLoop(p: PetState, obs: Pick<Observation, "tone">): void {
+  if (p.touch !== "pad" || !obs.tone || obs.tone.volume < 0.6) return;
+  const key = `tone:${Math.round(12 * Math.log2(obs.tone.pitch / 100))}`;
+  const anchors = (p.anchors ??= {});
+  const a = anchors[key];
+  if (!a || Math.hypot(a.x - p.odo.x, a.y - p.odo.y) > 250) anchors[key] = { x: p.odo.x, y: p.odo.y };
+  else { p.odo.x = a.x; p.odo.y = a.y; }
 }

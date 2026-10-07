@@ -14,9 +14,60 @@ The long-term goal is not to build a chatbot inside a cute shell. The goal is to
 
 This document is the long-term design. What is built today is a running software 2D simulator with three pets, a
 human avatar, System 1 (rules) and System 2 (slow LLM thinking), scene memory, a learned charger hum, sleep
-consolidation, dreams, prediction and surprise, belief verification, optional self-tuned habits, an AI Teacher,
-saves and brain export/import, and a tabbed dashboard. See [HANDOFF.md](HANDOFF.md) for how to run it, the
+consolidation, dreams, prediction and surprise, belief verification, relationships, optional self-tuned habits, an AI Teacher,
+saves and brain export/import, a four-room house with doors the pets open, a first-person 3D view with a minimap, spoken voices
+(a different one for each pet and the Teacher) and walkie-talkie speech input, and a tabbed dashboard. See [HANDOFF.md](HANDOFF.md) for how to run it, the
 environment variables, and a detailed description and measurements for each feature.
+
+## What it looks like
+
+These are taken from a running simulation (a run of about two simulated days, with the local model `qwen2.5:1.5b` doing the pets' and the Teacher's thinking).
+
+![The Live tab on a wide screen: the 3D view with the minimap, joystick and push-to-talk, the time controls, and the map of the whole house](docs/screenshots/live-desktop.png)
+
+### The house, in 3D
+
+The 3D view draws the same world the simulation runs in 2D: four rooms (living room, kitchen, bedroom, study), each with its own charger pad that hums at its own pitch, window, lamp and heater, joined by doors the pets and you open. You can walk it in first person, look from above, follow a pet, or see what a pet sees.
+
+| Walk (first person) | Top |
+|---|---|
+| ![First-person view of the living room, with Pip by the table](docs/screenshots/3d-walk.png) | ![Top-down view of all four rooms, with pets, the Teacher and the chargers](docs/screenshots/3d-top.png) |
+| **Follow a pet** | **Pet's eyes** |
+| ![Following a pet from behind](docs/screenshots/3d-follow.png) | ![The room as seen from a pet's own eyes](docs/screenshots/3d-pet-eyes.png) |
+
+### The cast
+
+Pip (curious and bold), Moss (cautious and patient), Coco (very social) and the Teacher. Each has its own colour and its own voice; pets show a battery bar and speech bubbles.
+
+![Pip, Moss, Coco and the Teacher as they look in the 3D view](docs/screenshots/cast.png)
+
+### The site
+
+The site is built for a phone. Tabs: Live, Talk, Pets, Env, Teacher, Saves, Dashboard.
+
+| Talk (chat and voice) | A pet's mind |
+|---|---|
+| ![The Talk tab: the Teacher answering a pet's question, you talking to Pip, and the voice controls with hold-to-talk](docs/screenshots/talk.png) | ![Pip's card: needs, beliefs, who it knows and how it rates them, and the map of chargers and doorways it has learned](docs/screenshots/pets-card.png) |
+
+| Environment (per room, and door locks) | The Teacher's plan |
+|---|---|
+| ![The Env tab with the room selector and door locks](docs/screenshots/env.png) | ![The Teacher's long-term plan](docs/screenshots/teacher-plan.png) |
+
+### Dashboard
+
+![Key indicators: simulated time, uptime, batteries, thoughts, speech and model calls](docs/screenshots/dashboard-top.png)
+
+| Rooms right now | Time per room |
+|---|---|
+| ![Each room with who is in it, its temperature, lamp, heater and curtain](docs/screenshots/dash-rooms.png) | ![Each pet's time per room, room changes, doors opened and where it charged](docs/screenshots/dash-time.png) |
+
+![Who was where over time, one coloured block per 15 simulated minutes](docs/screenshots/dash-strip.png)
+
+The map, which you can tap to walk there:
+
+![The 2D map of the house with the pets, the Teacher, you, the chargers and their hum rings](docs/screenshots/map.png)
+
+(To retake these pictures, see `scripts/screenshots.ts`.)
 
 ---
 

@@ -4,8 +4,38 @@
     {
       "name": "dev",
       "runtimeExecutable": "npm",
-      "runtimeArgs": ["run", "dev"],
+      "runtimeArgs": [
+        "run",
+        "dev"
+      ],
       "port": 3000
+    },
+    {
+      "name": "dev-house",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "RUN_ID=house-test",
+        "npm",
+        "run",
+        "dev"
+      ],
+      "port": 3000,
+      "autoPort": true
+    },
+    {
+      "name": "dev-offline",
+      "runtimeExecutable": "env",
+      "runtimeArgs": [
+        "RUN_ID=house-offline",
+        "GROQ_API_KEY=",
+        "DEEPSEEK_API_KEY=",
+        "LOCAL_LLM_MODEL=",
+        "npm",
+        "run",
+        "dev"
+      ],
+      "port": 3000,
+      "autoPort": true
     }
   ]
 }

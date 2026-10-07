@@ -152,3 +152,32 @@ test("initiative speech and teacher lessons also refuse structured text", async 
   const said = await (conv as any).express(Object.assign({}, { name: "Pip" }), "say hi");
   assert.equal(said, null, "JSON is not a sentence a pet can say");
 });
+
+test("a claim belongs to whoever the pet could see saying it, and to nobody if the voice was unseen", async () => {
+  const reply = () => '{"understood":{"intent":"tell","topic":"x"},"claims":[{"text":"The pad charges you"}],"reply":"ok"}';
+  const a = await setup(reply);
+  a.pip.heading = Math.PI; // facing the human, 50 away
+  await a.conv.humanSays({ kind: "pet", id: "pip" }, "hello", false);
+  await wait(1300);
+  const k = a.pip.mind.claims[0].fromKey;
+  assert.ok(k && a.pip.mind.others[k], "the human is now someone it knows by look");
+  const b = await setup(reply);
+  b.pip.heading = 0; // the human is behind it
+  await b.conv.humanSays({ kind: "pet", id: "pip" }, "hello", false);
+  await wait(1300);
+  assert.equal(b.pip.mind.claims[0].fromKey, undefined, "an unseen voice is nobody in particular");
+});
+
+test("a pet's question to the Teacher is spoken aloud, so the chat shows both sides", async () => {
+  const { conv, store, pip, moss } = await setup(() => "{}");
+  const u = await conv.petAsksTeacher(pip, "How long does a full charge take?");
+  assert.ok(u, "it was said");
+  assert.equal(u!.to.kind, "teacher");
+  assert.equal(u!.trace.kind, "question");
+  assert.ok(u!.heardBy.includes(moss.id), "a neighbour in earshot heard it too");
+  const comms = await store.readLog<any>("comms");
+  assert.equal(comms[comms.length - 1].from.id, "pip");
+  pip.mode = "sleeping";
+  assert.equal(await conv.petAsksTeacher(pip, "Anyone there?"), null, "a sleeping pet asks nothing aloud");
+  assert.equal(await conv.petAsksTeacher(moss, '{"reply": "x"}'), null, "structured text is never spoken");
+});

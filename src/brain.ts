@@ -8,6 +8,7 @@ import { MAX_REFUTED } from "./verify.js";
 import { KNOBS, KNOB_NAMES, newRules, type KnobName } from "./rules.js";
 import { MAX_DREAMS, type Dream, type TwistKind } from "./dreams.js";
 import { MAX_SCENES, type Scene, type SceneNear, type SceneThing } from "./scenes.js";
+import type { Relation } from "./relations.js";
 import { newCue, type Cue } from "./cues.js";
 import type { Gist } from "./sleep.js";
 import { newPredict, type PredictState, type Stat } from "./predict.js";
@@ -23,6 +24,7 @@ export interface BrainScene extends Omit<Scene, "id" | "tSec" | "pose" | "lastUs
 export interface BrainGist { text: string; confidence: number; kinds: string[]; uses: number; ageSec: number }
 
 /** What a pet has learned about one steady tone, as it travels in a brain file. */
+export interface BrainOther { key: string; hue: number; label: string; seenSec: number; goodSec: number; bumps: number; told: number; right: number; wrong: number; firstAgeSec: number; lastAgeSec: number }
 export interface BrainCue { key: string; pitch: number; exposureSec: number; support: number; contra: number; ageSec: number }
 
 /** A dream as it travels: remembered as a dream, with its invented parts and its worry, but not the moments it was made from. */
@@ -45,11 +47,12 @@ export interface BrainFile {
     question: string;
     intention: { goal: string; ageSec: number } | null;
     beliefs: { text: string; confidence: number; ageSec: number; verdict?: "supported" | "contradicted"; why?: string }[];
-    claims: { text: string; from: string; status: Claim["status"]; ageSec: number; why?: string }[];
+    claims: { text: string; from: string; status: Claim["status"]; ageSec: number; why?: string; fromKey?: string; counted?: "supported" | "contradicted" }[];
     refuted?: { text: string; why: string; ageSec: number }[]; // things found to be wrong, so a pet restored elsewhere does not take them up again
     episodes: string[];
   };
   scenes?: BrainScene[]; // absent in brains saved before scene memory
+  others?: BrainOther[]; // the individuals it knows and how it rates them; absent in older brains
   cues?: BrainCue[]; // what it has learned about steady tones; absent in older brains
   gists?: BrainGist[]; // patterns written up while asleep; absent in older brains
   dreams?: BrainDream[]; // recent dreams; absent in older brains
@@ -86,10 +89,11 @@ export function exportBrain(p: PetState, simSec: number, opts: { label?: string;
       question: m.question,
       intention: m.intention ? { goal: m.intention.goal, ageSec: age(m.intention.sinceSec) } : null,
       beliefs: m.beliefs.map((b) => ({ text: b.text, confidence: b.confidence, ageSec: age(b.updatedSec), ...(b.verdict ? { verdict: b.verdict, why: b.why } : {}) })),
-      claims: m.claims.map((c) => ({ text: c.text, from: c.from, status: c.status, ageSec: age(c.tSec), ...(c.why ? { why: c.why } : {}) })),
+      claims: m.claims.map((c) => ({ text: c.text, from: c.from, status: c.status, ageSec: age(c.tSec), ...(c.why ? { why: c.why } : {}), ...(c.fromKey ? { fromKey: c.fromKey } : {}), ...(c.counted ? { counted: c.counted } : {}) })),
       refuted: (m.refuted ?? []).map((r) => ({ text: r.text, why: r.why, ageSec: age(r.tSec) })),
       episodes: [...m.episodes],
     },
+    others: Object.values(m.others ?? {}).map((r) => ({ key: r.key, hue: r.hue, label: r.label, seenSec: r.seenSec, goodSec: r.goodSec, bumps: r.bumps, told: r.told, right: r.right, wrong: r.wrong, firstAgeSec: age(r.firstSec), lastAgeSec: age(r.lastSec) })),
     cues: Object.values(m.cues ?? {}).map((c) => ({ key: c.key, pitch: c.pitch, exposureSec: c.exposureSec, support: c.support, contra: c.contra, ageSec: age(c.lastHeardSec) })),
     ...(p.rules && Object.keys(p.rules.values).length ? { habits: { ...p.rules.values } } : {}),
     ...(p.predict ? { expect: { stats: Object.entries(p.predict.stats).map(([key, st]) => ({ key, ...st })), presence: { ...p.predict.presence } } } : {}),
@@ -124,7 +128,7 @@ function parseExpect(x: any): BrainExpect {
 }
 
 function parseScene(x: any): BrainScene {
-  const seen: SceneThing[] = (Array.isArray(x.seen) ? x.seen : []).slice(0, 5).map((t: any) => ({ category: cat(t?.category), size: t?.size === "large" ? "large" : "small", colour: str(t?.colour, 12), distance: Math.max(0, num(t?.distance)), bearing: bearing(t?.bearing) }));
+  const seen: SceneThing[] = (Array.isArray(x.seen) ? x.seen : []).slice(0, 5).map((t: any) => ({ category: cat(t?.category), size: t?.size === "large" ? "large" : "small", colour: str(t?.colour, 12), distance: Math.max(0, num(t?.distance)), bearing: bearing(t?.bearing), ...(t?.door === "open" || t?.door === "shut" ? { door: t.door } : {}) }));
   const near: SceneNear[] = (Array.isArray(x.near) ? x.near : []).slice(0, 5).map((n: any) => ({ category: cat(n?.category), gap: Math.max(0, num(n?.gap)), bearing: bearing(n?.bearing) }));
   return {
     kind: str(x.kind, 20) || "moment",
@@ -134,6 +138,7 @@ function parseScene(x: any): BrainScene {
     near,
     tone: x.tone && Number.isFinite(x.tone.pitch) ? { pitch: Math.round(num(x.tone.pitch)), volume: clamp01(x.tone.volume, 0) } : null,
     view: str(x.view, 24).replace(/[^.o#@|]/g, "."),
+    ...(Array.isArray(x.grid) ? { grid: x.grid.slice(0, 9).map((r: unknown) => str(r, 9).replace(/[^.o#@D:^]/g, ".")) } : {}),
     light: Math.round(Math.min(100, Math.max(0, num(x.light)))),
     temperature: num(x.temperature),
     battery: Math.round(Math.min(100, Math.max(0, num(x.battery)))),
@@ -174,10 +179,11 @@ export function parseBrain(raw: unknown): BrainFile {
       question: str(mind.question, 100),
       intention: mind.intention && typeof mind.intention.goal === "string" ? { goal: str(mind.intention.goal, 80), ageSec: Math.max(0, num(mind.intention.ageSec)) } : null,
       beliefs: list(mind.beliefs, 20).filter((b) => typeof b?.text === "string").map((b) => ({ text: str(b.text, 80), confidence: clamp01(b.confidence), ageSec: Math.max(0, num(b.ageSec)), ...(b.verdict === "supported" || b.verdict === "contradicted" ? { verdict: b.verdict as "supported" | "contradicted", why: str(b.why, 160) } : {}) })),
-      claims: list(mind.claims, 20).filter((c) => typeof c?.text === "string").map((c) => ({ text: str(c.text, 160), from: str(c.from, 120), status: statuses.includes(c.status) ? c.status : "unverified", ageSec: Math.max(0, num(c.ageSec)), ...(typeof c.why === "string" && c.why ? { why: str(c.why, 160) } : {}) })),
+      claims: list(mind.claims, 20).filter((c) => typeof c?.text === "string").map((c) => ({ text: str(c.text, 160), from: str(c.from, 120), status: statuses.includes(c.status) ? c.status : "unverified", ageSec: Math.max(0, num(c.ageSec)), ...(typeof c.why === "string" && c.why ? { why: str(c.why, 160) } : {}), ...(typeof c.fromKey === "string" && /^[\w]{1,24}$/.test(c.fromKey) ? { fromKey: c.fromKey } : {}), ...(c.counted === "supported" || c.counted === "contradicted" ? { counted: c.counted } : {}) })),
       refuted: list(mind.refuted, MAX_REFUTED).filter((r) => typeof r?.text === "string" && r.text.trim()).map((r) => ({ text: str(r.text, 160), why: str(r.why, 160), ageSec: Math.max(0, num(r.ageSec)) })),
       episodes: list(mind.episodes, 30).filter((e) => typeof e === "string").map((e) => str(e, 200)),
     },
+    others: list(r.others, 8).filter((o) => o && /^[\w]{1,24}$/.test(String(o.key))).map((o): BrainOther => ({ key: String(o.key), hue: Math.min(360, Math.max(-1, num(o.hue))), label: str(o.label, 40) || "someone", seenSec: Math.max(0, num(o.seenSec)), goodSec: Math.max(0, num(o.goodSec)), bumps: Math.max(0, Math.round(num(o.bumps))), told: Math.max(0, Math.round(num(o.told))), right: Math.max(0, Math.round(num(o.right))), wrong: Math.max(0, Math.round(num(o.wrong))), firstAgeSec: Math.max(0, num(o.firstAgeSec)), lastAgeSec: Math.max(0, num(o.lastAgeSec)) })),
     cues: list(r.cues, 12).filter((c) => c && /^tone:-?\d{1,3}$/.test(String(c.key))).map((c): BrainCue => ({ key: String(c.key), pitch: Math.round(Math.min(5000, Math.max(20, num(c.pitch, 534)))), exposureSec: Math.max(0, num(c.exposureSec)), support: Math.max(0, Math.round(num(c.support))), contra: Math.max(0, Math.round(num(c.contra))), ageSec: Math.max(0, num(c.ageSec)) })),
     habits: parseHabits(r.habits),
     expect: parseExpect(r.expect),
@@ -218,13 +224,14 @@ export function applyBrain(p: PetState, b: BrainFile, simSec: number, opts: { in
   mind.question = b.mind.question;
   mind.intention = b.mind.intention ? { goal: b.mind.intention.goal, sinceSec: at(b.mind.intention.ageSec) } : null;
   mind.beliefs = b.mind.beliefs.map((x): Belief => ({ text: x.text, confidence: x.confidence, updatedSec: at(x.ageSec), ...(x.verdict ? { verdict: x.verdict, why: x.why } : {}) }));
-  mind.claims = b.mind.claims.map((x): Claim => ({ text: x.text, from: x.from, status: x.status, tSec: at(x.ageSec), ...(x.why ? { why: x.why } : {}) }));
+  mind.claims = b.mind.claims.map((x): Claim => ({ text: x.text, from: x.from, status: x.status, tSec: at(x.ageSec), ...(x.why ? { why: x.why } : {}), ...(x.fromKey ? { fromKey: x.fromKey } : {}), ...(x.counted ? { counted: x.counted } : {}) }));
   mind.refuted = (b.mind.refuted ?? []).map((r) => ({ text: r.text, why: r.why, tSec: at(r.ageSec) }));
   mind.episodes = [...b.mind.episodes];
   mind.scenes = (b.scenes ?? []).map((x, i): Scene => {
     const { ageSec, usedAgeSec, lastAgeSec, ...rest } = x;
     return { ...structuredClone(rest), id: `s${Math.round(at(ageSec))}-b${i}`, tSec: at(ageSec), pose: null, lastUsedSec: usedAgeSec === null ? -1 : at(usedAgeSec), ...(lastAgeSec === null ? {} : { lastSec: at(lastAgeSec) }) };
   });
+  mind.others = Object.fromEntries((b.others ?? []).map((o) => [o.key, { key: o.key, hue: o.hue, label: o.label, firstSec: at(o.firstAgeSec), lastSec: at(o.lastAgeSec), seenSec: o.seenSec, goodSec: o.goodSec, bumps: o.bumps, lastBumpSec: -1e9, told: o.told, right: o.right, wrong: o.wrong } as Relation]));
   for (const c of b.cues ?? []) {
     const cue: Cue = { ...newCue(c.key, c.pitch, at(c.ageSec)), exposureSec: c.exposureSec, support: c.support, contra: c.contra, lastHeardSec: at(c.ageSec) };
     mind.cues[c.key] = cue;

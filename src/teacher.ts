@@ -12,14 +12,15 @@ import type { Simulation } from "./sim.js";
 import { looksLikeJson, type Target, type Utterance } from "./speech.js";
 import type { Store } from "./store.js";
 import { buildNotes, type TeacherHook } from "./system2.js";
-import { OBJECTS, OVERRIDE_FIELDS, ROOM, SOLIDS, centerOf, circleHitsShape, parseOverride } from "./world.js";
+import { OVERRIDE_FIELDS, ROOM_FIELDS, parseOverride } from "./world.js";
+import { LEGACY, blockedAt, centerOf, objectById, type Layout } from "./layout.js";
 
 // ---------- types ----------
 
 export type ItemKind = "lesson" | "observe" | "env";
 export type ItemStatus = "pending" | "done" | "missed" | "cancelled";
 
-export interface EnvAction { field: string; value: unknown; reason: string } // value "auto" releases a pinned field
+export interface EnvAction { field: string; value: unknown; reason: string; room?: string; door?: string } // value "auto" releases a pinned field; `room` limits a room field to one room; field "doorLocked" needs a `door`
 
 export interface AgendaItem {
   id: string;
@@ -77,10 +78,13 @@ export interface TeacherState {
 }
 
 export interface EnvControl {
-  set(field: string, value: unknown, source: "teacher", reason: string): Promise<{ field: string; from: unknown; to: unknown; mode: "pin" | "auto" }>;
+  set(field: string, value: unknown, source: "teacher", reason: string, scope?: { room?: string; door?: string }): Promise<{ field: string; from: unknown; to: unknown; mode: "pin" | "auto" }>;
   recent(limit: number): Promise<any[]>;
 }
-export interface TeacherSpeech { teacherSays(to: Target, text: string, trace: Record<string, unknown>): Promise<Utterance> }
+export interface TeacherSpeech {
+  teacherSays(to: Target, text: string, trace: Record<string, unknown>): Promise<Utterance>;
+  petAsksTeacher?(p: PetState, text: string): Promise<unknown>; // a pet's question is spoken aloud too, so the chat shows both sides
+}
 export interface TeacherLlm { enabled: boolean; complete(messages: ChatMessage[], opts?: CompleteOpts): Promise<LlmResult> }
 
 export interface TeacherConfig {
@@ -135,11 +139,18 @@ function extractJson(text: string): any | null {
 /** Validate an env action. Returns null if it is not a known field or value. "auto" releases a pinned field. */
 export function parseEnvAction(raw: any): EnvAction | null {
   if (!raw || typeof raw !== "object" || typeof raw.field !== "string") return null;
-  if (!(OVERRIDE_FIELDS as readonly string[]).includes(raw.field)) return null;
   const reason = str(raw.reason, 120);
-  if (raw.value === "auto") return { field: raw.field, value: "auto", reason };
+  if (raw.field === "doorLocked") { // lock or unlock one door
+    const door = str(raw.door, 40);
+    const v = raw.value === true || raw.value === "true" || raw.value === "locked" ? true : raw.value === false || raw.value === "false" || raw.value === "unlocked" ? false : null;
+    return door && v !== null ? { field: "doorLocked", value: v, reason, door } : null;
+  }
+  if (!(OVERRIDE_FIELDS as readonly string[]).includes(raw.field)) return null;
+  const room = typeof raw.room === "string" && raw.room ? str(raw.room, 40) : undefined;
+  if (room && !(ROOM_FIELDS as readonly string[]).includes(raw.field)) return null; // only a lamp, heater, curtain or temperature can differ by room
+  if (raw.value === "auto") return { field: raw.field, value: "auto", reason, ...(room ? { room } : {}) };
   try {
-    return { field: raw.field, value: parseOverride(raw.field, raw.value), reason };
+    return { field: raw.field, value: parseOverride(raw.field, raw.value), reason, ...(room ? { room } : {}) };
   } catch {
     return null;
   }
@@ -197,6 +208,8 @@ export function cleanText(text: string, max: number): string {
 const ENV_DOC =
   `Environment fields you may set: weather ("clear"|"cloudy"|"rain"), sunIntensity (0 to 1), outdoorTemp (-30 to 50, Celsius), indoorTemp (0 to 40), ` +
   `curtainOpen, doorOpen, lampOn, heaterOn, beaconOn (true or false; beaconOn is the charger's steady hum, which pets can hear across the room and have to work out the meaning of for themselves). A value you set stays pinned until you set the same field to "auto", which hands it back to the normal daily schedule. ` +
+  `The house has several rooms. To change just one room's curtainOpen, lampOn, heaterOn or indoorTemp, add "room": "<roomId>" to the env object; without it the change applies to the first room. ` +
+  `To lock or unlock a door, use {"field": "doorLocked", "door": "<doorId>", "value": true|false}: pets cannot open a locked door. ` +
   `Change the room only when it really helps the pets learn or stay well; small, reversible changes are best.`;
 
 const ROLE =
@@ -213,8 +226,9 @@ const PLAN_SCHEMA =
   `"topic": string (max 80), "outline": string (max 300: what you will teach, or what you will watch for), "env": null or {"field": string, "value": string|number|boolean, "reason": string (max 120)}}] ` +
   `(5 to 9 items covering the next 12 simulated hours, spread out, mixing lessons with quiet observation; "env" kind needs an env object)}.`;
 
-export function roomFacts(): string {
-  return `Room ${ROOM.width}x${ROOM.height}. Objects: ${OBJECTS.map((o) => o.id).join(", ")}. The window faces the sun; the charger pad restores battery and hums steadily (the pets do not know what the hum means); the lamp lights the room; the heater warms its corner.`;
+export function roomFacts(layout: Layout = LEGACY): string {
+  const rooms = layout.rooms.length > 1 ? ` Rooms: ${layout.rooms.map((r) => `${r.id} (${r.name})`).join(", ")}. Doors: ${layout.doors.map((d) => `${d.id} joins ${d.a} and ${d.b}`).join("; ")}. Every room has its own charger pad, window, lamp and heater; each pad hums at its own pitch.` : "";
+  return `Room ${layout.width}x${layout.height}.${rooms} Objects: ${layout.objects.map((o) => o.id).join(", ")}. The window faces the sun; the charger pad restores battery and hums steadily (the pets do not know what the hum means); the lamp lights the room; the heater warms its corner.`;
 }
 
 // ---------- the teacher ----------
@@ -306,6 +320,7 @@ export class Teacher implements TeacherHook {
     p.mind.episodes.push(`D${Math.floor(nowMin / DAY) + 1} ${String(Math.floor(t / 60)).padStart(2, "0")}:${String(t % 60).padStart(2, "0")} asked the Teacher: "${text.trim().slice(0, 100)}"`);
     if (p.mind.episodes.length > 14) p.mind.episodes.shift();
     void this.log("question", { pet: p.id, text: text.trim().slice(0, 120) });
+    void this.speech.petAsksTeacher?.(p, text.trim().slice(0, 120))?.catch?.(() => {});
   }
 
   // ----- the tick -----
@@ -390,12 +405,12 @@ export class Teacher implements TeacherHook {
     const t = this.sim.teacher;
     const dx = t.x - pet.x, dy = t.y - pet.y;
     const d = Math.hypot(dx, dy) || 1;
-    return { x: Math.min(ROOM.width - 30, Math.max(30, pet.x + (dx / d) * 70)), y: Math.min(ROOM.height - 30, Math.max(30, pet.y + (dy / d) * 70)) };
+    return { x: Math.min(this.sim.world.layout.width - 30, Math.max(30, pet.x + (dx / d) * 70)), y: Math.min(this.sim.world.layout.height - 30, Math.max(30, pet.y + (dy / d) * 70)) };
   }
 
   private goalFor(a: Active): { x: number; y: number } {
     const pets = this.sim.pets;
-    const obj = OBJECTS.find((o) => o.id === a.where);
+    const obj = objectById(this.sim.world.layout, a.where);
     if (obj) return centerOf(obj);
     if (a.where === "center") return { x: 650, y: 330 };
     const pet = pets.find((p) => p.id === a.target);
@@ -406,7 +421,7 @@ export class Teacher implements TeacherHook {
 
   private arrived(a: Active): boolean {
     const t = this.sim.teacher;
-    const obj = OBJECTS.find((o) => o.id === a.where);
+    const obj = objectById(this.sim.world.layout, a.where);
     if (obj) return Math.hypot(t.x - centerOf(obj).x, t.y - centerOf(obj).y) < ARRIVE_OBJECT;
     const pet = this.sim.pets.find((p) => p.id === a.target);
     if (pet) return Math.hypot(t.x - pet.x, t.y - pet.y) < ARRIVE_PET;
@@ -427,8 +442,9 @@ export class Teacher implements TeacherHook {
     if (w && Math.hypot(t.x - w.x, t.y - w.y) < 20 && w.restUntilSec === undefined) w.restUntilSec = now + 30 + this.rng.next() * 120;
     if (!w || now >= w.untilSec || (w.restUntilSec !== undefined && now >= w.restUntilSec)) {
       for (let i = 0; i < 12; i++) {
-        const x = 40 + this.rng.next() * (ROOM.width - 80), y = 40 + this.rng.next() * (ROOM.height - 80);
-        if (!SOLIDS.some((sh) => circleHitsShape(x, y, 34, sh))) { w = { x, y, untilSec: now + 300 }; break; }
+        const L = this.sim.world.layout;
+        const x = 40 + this.rng.next() * (L.width - 80), y = 40 + this.rng.next() * (L.height - 80);
+        if (!blockedAt(L, x, y, 34)) { w = { x, y, untilSec: now + 300 }; break; }
       }
       s.wander = w;
     }
@@ -473,7 +489,7 @@ export class Teacher implements TeacherHook {
     const plan = this.state.plan;
     const lines = [
       `Time now: ${this.clock(nowMin)} (simulated minute ${nowMin}).`,
-      roomFacts(),
+      roomFacts(this.sim.world.layout),
       `Environment now: weather ${e.weather}, sun ${Math.round(e.sunIntensity * 100)}%, outdoor ${e.outdoorTemp}C, indoor ${e.indoorTemp}C, curtain ${e.curtainOpen ? "open" : "closed"}, door ${e.doorOpen ? "open" : "closed"}, lamp ${e.lampOn ? "on" : "off"}, heater ${e.heaterOn ? "on" : "off"}. Pinned (not on the normal schedule): ${pins.length ? pins.join(", ") : "nothing"}.`,
       `Recent environment changes: ${changes.length ? changes.map((c) => `${this.clock(c.simMinute)} ${c.field}${c.mode === "auto" ? " released to auto" : " -> " + c.to} (${c.source})`).join("; ") : "none"}.`,
       `The pets:\n${this.sim.pets.map((p) => this.petBrief(p)).join("\n")}`,
@@ -512,7 +528,7 @@ export class Teacher implements TeacherHook {
     );
     if (this.disposed) return;
     const nowMin = this.nowMin();
-    const parsed = parsePlanReply(r.text, { nowMin, petIds: this.sim.pets.map((p) => p.id), objectIds: OBJECTS.map((o) => o.id) });
+    const parsed = parsePlanReply(r.text, { nowMin, petIds: this.sim.pets.map((p) => p.id), objectIds: this.sim.world.layout.objects.map((o) => o.id) });
     if (!parsed) {
       this.state.retryAtReal = this.now() + 60_000;
       this.state.lastError = `${mode}: the model's plan could not be read (${r.provider})`;
@@ -561,9 +577,10 @@ export class Teacher implements TeacherHook {
 
   private async applyEnv(action: EnvAction, source: string): Promise<string> {
     try {
-      const r = await this.env.set(action.field, action.value, "teacher", action.reason || source);
+      const r = await this.env.set(action.field, action.value, "teacher", action.reason || source, { room: action.room, door: action.door });
       this.state.stats.envChanges++;
-      return r.mode === "auto" ? `released ${action.field} back to its normal schedule` : `set ${action.field} to ${String(r.to)}`;
+      const where = action.door ? ` (door ${action.door})` : action.room ? ` (${action.room})` : "";
+      return r.mode === "auto" ? `released ${action.field}${where} back to its normal schedule` : `set ${action.field}${where} to ${String(r.to)}`;
     } catch (e: any) {
       return `could not change ${action.field}: ${e.message}`;
     }
@@ -605,7 +622,7 @@ export class Teacher implements TeacherHook {
           `${ROLE}\nYou are now speaking aloud to ${who}. Say 2 to 4 short sentences in plain, friendly English (at most 70 words). Teach the topic concretely, tied to what they can sense in this room. ` +
           `Where you can, invite them to try or check something themselves. No lists, no quotation marks, no emojis, no stage directions, and do not invent objects that are not in the room.`,
       },
-      { role: "user", content: `Topic: ${item.topic}\nOutline: ${item.outline}\n${envNote ? `You just changed the room: ${envNote}.\n` : ""}Your long-term goals: ${goals}\n${roomFacts()}\nWhat you know about ${who}:\n${notes}` },
+      { role: "user", content: `Topic: ${item.topic}\nOutline: ${item.outline}\n${envNote ? `You just changed the room: ${envNote}.\n` : ""}Your long-term goals: ${goals}\n${roomFacts(this.sim.world.layout)}\nWhat you know about ${who}:\n${notes}` },
     ];
     let r: LlmResult;
     try {
@@ -665,7 +682,7 @@ export class Teacher implements TeacherHook {
             role: "user",
             content:
               `${pet.name} asks: "${q.text}"\nEnvironment now: weather ${e.weather}, sun ${Math.round(e.sunIntensity * 100)}%, indoor ${e.indoorTemp}C, curtain ${e.curtainOpen ? "open" : "closed"}, door ${e.doorOpen ? "open" : "closed"}, lamp ${e.lampOn ? "on" : "off"}, heater ${e.heaterOn ? "on" : "off"}.\n` +
-              `Your long-term goals: ${goals}\n${roomFacts()}\nWhat you know about ${pet.name}:\n${buildNotes(pet, Math.floor(this.nowMin() / DAY) + 1, tod, 0)}`,
+              `Your long-term goals: ${goals}\n${roomFacts(this.sim.world.layout)}\nWhat you know about ${pet.name}:\n${buildNotes(pet, Math.floor(this.nowMin() / DAY) + 1, tod, 0)}`,
           },
         ],
         { maxTokens: 500, temperature: 0.7, json: true },

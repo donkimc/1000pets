@@ -7,6 +7,7 @@
 // This is deliberately limited: it only knows the topics below, and says nothing about anything else. A statement it
 // cannot test is left alone, never guessed at. The evidence is the pet's own: nothing here tells it how the world works.
 import type { PetState } from "./pet.js";
+import { keyHz } from "./places.js";
 import type { Scene } from "./scenes.js";
 
 export type VerdictState = "supported" | "contradicted" | "unclear";
@@ -28,6 +29,8 @@ function count(p: Pick<PetState, "mind">, kinds: string[], since: number, where?
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 
 /** Scenes of a kind that have a known place. */
+/** Which pad a charger moment was at, told apart by its hum, the only thing about a pad that identifies it. */
+const padHum = (s: { tone: { pitch: number } | null }) => (s.tone ? Math.round(12 * Math.log2(s.tone.pitch / 100)) : -1);
 const placed = (p: Pick<PetState, "mind">, kind: string) => p.mind.scenes.filter((s) => s.kind === kind && s.pose);
 
 /** A rate of failures against occasions, turned into a verdict. Too few occasions: unclear. */
@@ -41,7 +44,7 @@ function byRate(topic: string, support: number, contra: number, absolute: boolea
 interface Topic {
   id: string;
   matches: (text: string) => boolean;
-  check: (p: Pick<PetState, "mind" | "predict">, text: string, since: number, now: number) => Verdict;
+  check: (p: Pick<PetState, "mind" | "predict" | "places">, text: string, since: number, now: number) => Verdict;
 }
 
 const has = (re: RegExp) => (t: string) => re.test(t);
@@ -98,6 +101,16 @@ const TOPICS: Topic[] = [
     },
   },
   {
+    // "there is more than one pad / another charger": borne out once it has found two pads that hum differently or lie apart
+    id: "more than one pad",
+    matches: (t) => /\b(more than one|another|other|several|different|second|two|multiple|many)\b.{0,20}\b(pads?|chargers?|charging (pads?|stations?))\b|\b(pads?|chargers?)\b.{0,25}\b(in (every|each|other|another|different) (room|place))\b/i.test(t),
+    check: (p) => {
+      const pads = Object.values(p.places?.nodes ?? {}).filter((n) => n.kind === "pad");
+      if (pads.length >= 2) return { topic: "more than one pad", state: "supported", positive: true, support: pads.length, contra: 0, why: `I have found ${pads.length} different pads${pads.every((n) => n.key) ? `, humming at ${pads.map((n) => keyHz(n.key!) + " Hz").join(", ")}` : ""}` };
+      return { topic: "more than one pad", state: "unclear", support: 0, contra: 0, why: "I have only found one pad so far" };
+    },
+  },
+  {
     // "the pad stays in the same place" / "the pad moves"
     id: "pad stays put",
     matches: (t) => /\b(pad|charger)\b/i.test(t) && /\b(same (place|spot|position)|stays?|fixed|always (here|there|in the same)|doesn'?t move|never moves|moves?|moving|shifts?|changes? (place|position))\b/i.test(t) && !/\b(heater|warm)/i.test(t),
@@ -107,6 +120,7 @@ const TOPICS: Topic[] = [
       let spread = -1, pairs = 0;
       for (let i = 0; i < cs.length; i++) for (let j = i + 1; j < cs.length; j++) {
         if (Math.abs(cs[i].tSec - cs[j].tSec) > SIX_HOURS) continue; // dead reckoning drifts over many hours: only compare moments close in time
+        if (padHum(cs[i]) !== padHum(cs[j])) continue; // each room has its own pad, with its own hum: pads that hum differently are different pads
         pairs++;
         spread = Math.max(spread, dist(cs[i].pose!, cs[j].pose!));
       }
@@ -146,7 +160,7 @@ const TOPICS: Topic[] = [
 ];
 
 /** Test a statement against the pet's own experience since `sinceSec`. Null if it is not about anything this knows how to check. */
-export function checkStatement(p: Pick<PetState, "mind" | "predict">, text: string, sinceSec: number, nowSec: number): Verdict | null {
+export function checkStatement(p: Pick<PetState, "mind" | "predict" | "places">, text: string, sinceSec: number, nowSec: number): Verdict | null {
   const topic = TOPICS.find((t) => t.matches(text));
   return topic ? topic.check(p, text, sinceSec, nowSec) : null;
 }
