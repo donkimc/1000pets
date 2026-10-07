@@ -8,7 +8,7 @@ const liveVisible = () => !document.querySelector('[data-tab="live"]').classList
 
 let w3;
 try {
-  w3 = createWorld3D(canvas, { bubbles: () => (app() ? app().bubbles : {}), visible: liveVisible });
+  w3 = createWorld3D(canvas, { bubbles: () => (app() ? app().bubbles : {}), visible: liveVisible, maxFps: Number(new URLSearchParams(location.search).get("fps")) || 0 });
 } catch (e) {
   $("view-note").textContent = "3D is not available in this browser; the map still works.";
   console.error(e);

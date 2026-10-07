@@ -179,7 +179,7 @@ export function createWorld3D(canvas, opts = {}) {
   const chars = new Map(); // "pet:<id>" | "human" | "teacher" -> { group, cur:{x,y,h}, target:{x,y,h}, ... }
   let st = { pets: [], human: null, teacher: null, env: null, rooms: [], doors: [] };
   const view = { mode: "walk", yaw: 0, pitch: 0, follow: null, haveYaw: false };
-  let last = performance.now();
+  let last = performance.now(), lastRendered = 0;
 
   function clearRoot() {
     while (root.children.length) { const c = root.children[0]; root.remove(c); c.traverse?.((n) => { n.geometry?.dispose?.(); }); }
@@ -363,6 +363,26 @@ export function createWorld3D(canvas, opts = {}) {
       camera.position.set(h.cur.x, EYE, h.cur.y);
       tmp.set(h.cur.x + Math.cos(view.yaw) * 100, EYE + Math.sin(view.pitch) * 100, h.cur.y + Math.sin(view.yaw) * 100);
       camera.lookAt(tmp);
+    } else if (view.mode === "portrait") {
+      const c = chars.get(view.portrait);
+      if (!c) return;
+      const tall = c.kind !== "pet" && !c.kind.startsWith("pet");
+      const d = tall ? 150 : 85, hy = tall ? 62 : 30;
+      // Stand on whichever side has the most open floor (not against a wall), preferring the character's front.
+      let bestA = c.cur.h + 0.5, bestScore = -1;
+      for (let k = 0; k < 24; k++) {
+        const a = c.cur.h + 0.5 + (k / 24) * 2 * Math.PI;
+        let free = 0;
+        for (let r = 20; r <= d + 40; r += 10) {
+          const x = c.cur.x + Math.cos(a) * r, y = c.cur.y + Math.sin(a) * r;
+          const hit = !layout || x < 10 || y < 10 || x > layout.width - 10 || y > layout.height - 10 || [...(layout.walls || []), ...Object.values(layout.doorRects || {})].some((w) => x > w.x - 12 && x < w.x + w.w + 12 && y > w.y - 12 && y < w.y + w.h + 12) || (layout.solids || []).some((s) => (s.type === "circle" ? Math.hypot(x - s.cx, y - s.cy) < s.r + 14 : x > s.x - 14 && x < s.x + s.w + 14 && y > s.y - 14 && y < s.y + s.h + 14));
+          if (hit) break; free = r;
+        }
+        const facing = Math.cos(a - c.cur.h) * 20; // a little weight toward the front
+        if (free + facing > bestScore) { bestScore = free + facing; bestA = a; }
+      }
+      camera.position.set(c.cur.x + Math.cos(bestA) * d, hy + 8, c.cur.y + Math.sin(bestA) * d);
+      camera.lookAt(c.cur.x, hy, c.cur.y);
     } else if (view.mode === "follow" || view.mode === "pet") {
       const c = chars.get("pet:" + (view.follow || (st.pets[0] && st.pets[0].id)));
       if (!c) return;
@@ -391,6 +411,8 @@ export function createWorld3D(canvas, opts = {}) {
     requestAnimationFrame(frame);
     const dt = Math.min(0.1, (now - last) / 1000); last = now;
     if (opts.visible && !opts.visible()) return;
+    if (opts.maxFps && now - lastRendered < 1000 / opts.maxFps) return; // (a slow machine, or taking pictures: draw less often)
+    lastRendered = now;
     resize();
     applyEnvironment(dt);
     animateCharacters(dt, now / 1000);
@@ -410,6 +432,13 @@ export function createWorld3D(canvas, opts = {}) {
 
   return {
     update, setLayout, floorPoint, view,
+    /** A close-up of one character, from the front (for pictures of the cast). Returns false if there is no such character. */
+    portrait(key) {
+      const c = chars.get(key);
+      if (!c) return false;
+      view.mode = "portrait"; view.portrait = key;
+      return true;
+    },
     setMode(m, petId) { view.mode = m; if (petId) view.follow = petId; if (m === "walk") view.haveYaw = false; },
     look(dyaw, dpitch) { view.yaw += dyaw; view.pitch = Math.max(-1.2, Math.min(1.2, view.pitch + dpitch)); view.haveYaw = true; },
     get yaw() { return view.yaw; },

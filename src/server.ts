@@ -134,7 +134,7 @@ const envControl: EnvControl = {
 
 /** Build the live session from the files in the run folder (or from scratch when there are none). */
 async function loadSession() {
-  const savedClock = await store.readJson<{ simMs: number; speed: number }>("clock.json");
+  const savedClock = await store.readJson<{ simMs: number; speed: number; paused?: boolean }>("clock.json");
   const savedWorld = await store.readJson<WorldSnapshot>("world.json");
   const savedSim = await store.readJson<SimSnapshot>("pets.json");
   const savedTeacher = await store.readJson<TeacherState>("teacher.json");
@@ -145,6 +145,8 @@ async function loadSession() {
   if (conversation) conversation.disposed = true;
   clock = new SimClock(savedClock?.simMs ?? 0);
   if (savedClock && (SPEEDS as readonly number[]).includes(savedClock.speed)) clock.speed = savedClock.speed;
+  // A paused world stays paused across restarts and deploys (it used to come back running and spend model calls). START_PAUSED=on makes every start paused.
+  if (process.env.START_PAUSED === "on" || savedClock?.paused) clock.setPaused(true);
   // A new run lives in the house. A run saved in the old single room stays there, unless LAYOUT=house moves it into the house.
   const layout = LAYOUTS[process.env.LAYOUT ?? savedWorld?.layoutId ?? (savedWorld ? "legacy" : "house")] ?? HOUSE;
   world = new World(SEED, savedWorld ?? undefined, layout);
@@ -659,7 +661,7 @@ setInterval(() => {
 }, 250);
 
 async function save() {
-  await store.writeJson("clock.json", { simMs: clock.simTimeMs, speed: clock.speed });
+  await store.writeJson("clock.json", { simMs: clock.simTimeMs, speed: clock.speed, paused: clock.paused });
   await store.writeJson("world.json", world.snap);
   await store.writeJson("pets.json", sim.snapshot());
   await store.writeJson("teacher.json", teacher.snapshot());
