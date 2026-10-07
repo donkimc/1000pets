@@ -487,6 +487,32 @@ app.post("/api/saves", requireAdmin, async (req, res) => {
   }
   res.json(await createSave(name));
 });
+// A save as one file you can keep, and load back later (here or on another machine).
+app.get("/api/saves/:id/download", async (req, res) => {
+  try {
+    const meta = await saves.get(req.params.id);
+    if (!meta) throw new Error("no such save");
+    const buf = await saves.exportBundle(meta.id);
+    res.setHeader("content-type", "application/gzip");
+    res.setHeader("content-disposition", `attachment; filename="1000pets-${meta.id}.1000pets"`);
+    res.send(buf);
+  } catch (e: any) {
+    res.status(404).json({ error: e.message });
+  }
+});
+app.post("/api/saves/import", requireAdmin, express.raw({ type: () => true, limit: "300mb" }), async (req, res) => {
+  if (loading) {
+    res.status(409).json({ error: "busy loading a save" });
+    return;
+  }
+  try {
+    const body = req.body as Buffer;
+    if (!Buffer.isBuffer(body) || !body.length) throw new Error("no file was sent");
+    res.json(await saves.importBundle(body, decodeURIComponent(String(req.header("x-file-name") ?? "")).replace(/\.1000pets$/i, "").slice(0, 44) || undefined));
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
 app.post("/api/saves/:id/rename", requireAdmin, async (req, res) => {
   try {
     res.json(await saves.rename(req.params.id, String(req.body?.name ?? "").trim() || "Untitled"));

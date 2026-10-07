@@ -148,6 +148,12 @@
 <section class="bg-panel rounded-xl p-4 mb-3">
   <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Save the simulation</h2>
   <div class="flex gap-2"><input id="save-name" maxlength="60" autocomplete="off" placeholder="Name (e.g. Day 3, before the heater test)" class="flex-1 min-w-0 bg-slate-700 rounded-lg px-3 py-2 text-base outline-none focus:ring-1 focus:ring-accent"><button id="save-go" class="px-4 rounded-lg bg-accent text-emerald-950 font-semibold">Save</button></div>
+  <div class="flex flex-wrap gap-2 mt-2">
+    <button id="save-dl" class="px-3 py-2 rounded-lg bg-slate-700 active:bg-slate-600 text-sm">Save and download a file</button>
+    <button id="save-up" class="px-3 py-2 rounded-lg bg-slate-700 active:bg-slate-600 text-sm">Load from a file…</button>
+    <input id="save-file" type="file" accept=".1000pets,.gz,application/gzip" class="hidden">
+  </div>
+  <p class="text-xs text-mute mt-2">A file holds the whole simulation (world, pets, teacher, history, thoughts). Keep it, move it to another machine (say, from the hosted site to your own), and load it there. Loading a file adds it to the list below, then asks before it replaces the live world.</p>
   <div id="save-note" class="text-xs text-mute mt-2 min-h-4"></div>
 </section>
 <section class="bg-panel rounded-xl p-4 mb-3">
