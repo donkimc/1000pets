@@ -11,6 +11,7 @@ import { describeExpectations, describeSurprises } from "./predict.js";
 import { describeGists, markGistsUsed } from "./sleep.js";
 import { copiesDream, dreamLine } from "./dreams.js";
 import { describeOthers, sourceNote } from "./relations.js";
+import { describePlaces } from "./places.js";
 import { copiesRefuted } from "./verify.js";
 import { KNOB_NAMES, describeHabits, proposeTune, type KnobName } from "./rules.js";
 
@@ -73,6 +74,7 @@ export function buildNotes(p: PetState, day: number, timeOfDay: number, nearby =
     `Within reach, in any direction (you can sense this even without seeing it): ${m.sensed.near?.length ? m.sensed.near.join("; ") : "nothing"}.`,
     `Within earshot: ${nearby ? `${nearby} other creature${nearby > 1 ? "s" : ""}` : "nobody"}.`,
     `The others I know (I tell them apart by how they look, I do not know their names):\n${describeOthers(p, nowSec).join("\n") || "- (no one yet)"}`,
+    `Pads where my battery filled up, and how I could get back to them:\n${describePlaces(p, nowSec ?? 0).join("\n") || "- (none yet)"}`,
     `Hearing a steady tone: ${m.sensed.tone || "none right now"}.`,
     `How well I can predict things: ${describeExpectations(p)}`,
     `What has surprised me lately (something I expected did not happen):\n${describeSurprises(p, nowSec).join("\n") || "- (nothing)"}`,

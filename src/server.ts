@@ -19,6 +19,7 @@ import { Simulation, type SimSnapshot } from "./sim.js";
 import { TEACHER_VOICE, hueOf, type PetDef } from "./pet.js";
 import { HUMAN_HUE } from "./sensors.js";
 import { KNOWN_SEC, affinityOf, trustOf } from "./relations.js";
+import { keyHz } from "./places.js";
 import { gatewayFromEnv, type ProviderStats } from "./llm.js";
 import { System2 } from "./system2.js";
 import { Conversation } from "./conversation.js";
@@ -259,6 +260,12 @@ app.get("/api/mind/:id", (req, res) => {
     gists: p.mind.gists.map((g) => ({ id: g.id, text: g.text, confidence: g.confidence, uses: g.uses, sources: g.sources.length, verdict: g.verdict ?? null, why: g.why ?? null })),
     lastSleep: p.mind.lastSleep,
     predict: predictView(p),
+    places: p.places ? {
+      nodes: Object.values(p.places.nodes).map((n) => ({ id: n.id, kind: n.kind, x: n.x, y: n.y, hz: n.key ? keyHz(n.key) : null, charged: n.charged, visits: n.visits, avoided: (p.places!.avoid[n.id] ?? 0) > sim.simSec })),
+      edges: p.places.edges.map((e) => ({ a: e.a, b: e.b, len: e.len, n: e.n, via: e.via })),
+      route: p.places.route ? { path: p.places.route.path, step: p.places.route.step } : null,
+      here: { x: Math.round(p.odo.x), y: Math.round(p.odo.y) },
+    } : null,
     rules: ruleView(p, sim.simSec),
     claims: p.mind.claims.map((c) => ({ text: c.text, from: c.from, status: c.status, why: c.why ?? null })),
     refuted: [...p.mind.refuted].reverse(),

@@ -294,6 +294,7 @@ async function loadThoughts(id) {
     ((m.claims || []).length ? m.claims.slice(-5).map((c) => `<div>• ${esc(c.text)} <span class="${c.status === "contradicted" ? "text-amber-300" : c.status === "supported" ? "text-accent" : "text-mute"}">${esc(c.status)}${c.why && c.status !== "unverified" ? ": " + esc(c.why) : ""}</span></div>`).join("") : "<div class='text-mute'>nothing yet</div>") +
     `<div class="text-mute mt-2">Who it knows <span class="text-xs">(it tells them apart by how they look and rates them by company and by whether what they said held up)</span></div>` +
     ((m.others || []).length ? m.others.map((o) => `<div>• ${esc(o.label)}${o.actually ? ` <span class="text-mute">(really ${esc(o.actually)})</span>` : ""}: ${o.minutes} min seen, ${o.known ? (o.affinity > 0.25 ? "good company" : o.affinity < -0.1 ? "not good company" : "company so-so") : "barely known"}${o.bumps ? `, ${o.bumps} bumps` : ""}${o.told ? `, <span class="${o.trust >= 0.65 ? "text-accent" : o.trust <= 0.35 ? "text-amber-300" : ""}">${o.right} of ${o.told} told held up</span>` : ""}</div>`).join("") : "<div class='text-mute'>nobody yet</div>") +
+    `<div class="text-mute mt-2">Places it knows <span class="text-xs">(its own map: chargers and doorways it has reached, and the runs between them; no walls, no names)</span></div>` + placesMap(m.places) +
     ((m.refuted || []).length ? `<div class="text-mute mt-2">Found to be wrong <span class="text-xs">(it will not take these up again for a day)</span></div>` + m.refuted.slice(0, 3).map((r) => `<div>• ${esc(r.text)} <span class="text-mute">— ${esc(r.why)}</span></div>`).join("") : "") +
     (m.predict ? `<div class="text-mute mt-2">What surprised it <span class="text-xs">(expectations it learned from experience, and where reality broke them)</span></div><div class="text-xs">recent surprise level ${(m.predict.level * 100).toFixed(1)}%${Object.entries(m.predict.byChannel).map(([k, v]) => ` · ${esc(k)} ${(v * 100).toFixed(1)}%`).join("")}</div>` + (m.predict.recent.length ? m.predict.recent.slice(0, 4).map((s) => `<div>• ${esc(s.why)} <span class="text-mute">(${Math.round(s.score * 100)}%)</span></div>`).join("") : "<div class='text-mute'>nothing unexpected yet</div>") : "") +
     `<div class="text-mute mt-2">Dreams <span class="text-xs">(remembered as dreams: none of it happened, and it is kept apart from what it believes)</span></div>` +
@@ -350,6 +351,23 @@ function renderEnv(e) {
     html += [["Indoor", e.indoorTemp.toFixed(1) + " °C"], ["Curtain", e.curtainOpen ? "open" : "closed"], ["Lamp", e.lampOn ? "on" : "off"], ["Heater", e.heaterOn ? "on" : "off"]].map(([k, v]) => `<div><div class="text-xs text-mute">${k}</div><div class="text-base font-semibold">${v}</div></div>`).join("");
   }
   $("env").innerHTML = html;
+}
+
+function placesMap(pl) {
+  if (!pl || !pl.nodes.length) return "<div class='text-mute'>none yet</div>";
+  const pts = [...pl.nodes, pl.here], xs = pts.map((p) => p.x), ys = pts.map((p) => p.y);
+  const x0 = Math.min(...xs) - 40, x1 = Math.max(...xs) + 40, y0 = Math.min(...ys) - 40, y1 = Math.max(...ys) + 40;
+  const W = 300, k = Math.min(W / (x1 - x0), 220 / (y1 - y0)), H = (y1 - y0) * k;
+  const X = (x) => ((x - x0) * k).toFixed(1), Y = (y) => ((y - y0) * k).toFixed(1);
+  const byId = Object.fromEntries(pl.nodes.map((n) => [n.id, n]));
+  const onRoute = new Set(); if (pl.route) for (let i = 1; i < pl.route.path.length; i++) onRoute.add(pl.route.path[i - 1] + ">" + pl.route.path[i]);
+  let s = `<svg viewBox="0 0 ${W} ${H.toFixed(0)}" class="w-full h-auto mt-1 rounded bg-ink/60" role="img" aria-label="The places this pet knows">`;
+  for (const e of pl.edges) { const a = byId[e.a], b = byId[e.b]; if (!a || !b) continue; const hot = onRoute.has(e.a + ">" + e.b) || onRoute.has(e.b + ">" + e.a); const pts = [a, ...(e.via || []), b].map((q) => `${X(q.x)},${Y(q.y)}`).join(" "); s += `<polyline points="${pts}" fill="none" stroke="${hot ? "#2dd4bf" : "#4b5563"}" stroke-width="${hot ? 3 : 1.5}" stroke-linejoin="round"/>`; }
+  for (const n of pl.nodes) {
+    s += n.kind === "pad" ? `<circle cx="${X(n.x)}" cy="${Y(n.y)}" r="8" fill="${n.avoided ? "#78716c" : "#e0c341"}"><title>charger ${n.hz ? n.hz + " Hz" : ""}: charged ${n.charged} times</title></circle><text x="${X(n.x)}" y="${(Number(Y(n.y)) - 11).toFixed(1)}" text-anchor="middle" font-size="9" fill="#e8edf2">${n.hz ? n.hz + " Hz" : "pad"} ×${n.charged}</text>` : `<rect x="${(Number(X(n.x)) - 5).toFixed(1)}" y="${(Number(Y(n.y)) - 5).toFixed(1)}" width="10" height="10" fill="#8b5e3c"><title>doorway, passed ${n.visits} times</title></rect>`;
+  }
+  s += `<polygon points="${X(pl.here.x)},${(Number(Y(pl.here.y)) - 7).toFixed(1)} ${(Number(X(pl.here.x)) + 6).toFixed(1)},${(Number(Y(pl.here.y)) + 5).toFixed(1)} ${(Number(X(pl.here.x)) - 6).toFixed(1)},${(Number(Y(pl.here.y)) + 5).toFixed(1)}" fill="#fff"><title>where it thinks it is now</title></polygon></svg>`;
+  return s + `<div class="text-xs text-mute">yellow: charger (hum pitch, times charged there) · brown: doorway · white: where it thinks it is${pl.route ? " · teal: the way it is walking now" : ""}</div>`;
 }
 
 const FLOORS = { wood: "#3a3128", tile: "#34404a", carpet: "#3b3350", stone: "#363a3f" };

@@ -10,6 +10,7 @@ import { takePeak, updatePredictions, type Surprise } from "./predict.js";
 import { tickRules, type RuleEvent } from "./rules.js";
 import { describeTone, toneKey, updateCues } from "./cues.js";
 import { observeOthers } from "./relations.js";
+import { observePlaces } from "./places.js";
 import { sleepTick, type SleepSummary } from "./sleep.js";
 import { addDream, makeDream, type Dream } from "./dreams.js";
 import { cleanBeliefs } from "./system2.js";
@@ -269,6 +270,8 @@ export class Simulation {
     this.act(p, decision, obs, out);
     updateOdometry(p, DT, rng);
     closeLoop(p, obs);
+    observePlaces(p, obs, this.simSec, !!p.enteredDoorway);
+    p.enteredDoorway = false;
     const surprises = [...updateCues(p, obs, this.simSec, DT), ...updatePredictions(p, obs, this.simSec)];
     for (const sur of surprises) captureSurpriseScene(p, obs, this.simSec, rng, sur); // a broken expectation is worth remembering
     watchScenes(p, obs, this.simSec, rng);
@@ -315,7 +318,7 @@ export class Simulation {
     if (obs.touch === "door") this.note(p, "bumped into a shut door");
     // Walking through a doorway is something the pet can feel (the floor changes under it for a step or two).
     const inDoor = Object.values(this.world.layout.doorRects).some((r) => p.x > r.x - 8 && p.x < r.x + r.w + 8 && p.y > r.y - 8 && p.y < r.y + r.h + 8);
-    if (inDoor && !p.inDoorway) this.note(p, "passed through a doorway");
+    if (inDoor && !p.inDoorway) { this.note(p, "passed through a doorway"); p.enteredDoorway = true; }
     p.inDoorway = inDoor;
   }
 

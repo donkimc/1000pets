@@ -6,6 +6,7 @@ import type { Dream } from "./dreams.js";
 import type { PredictState } from "./predict.js";
 import type { RuleState } from "./rules.js";
 import type { Relation } from "./relations.js";
+import type { PlaceMap } from "./places.js";
 
 export interface Traits { curiosity: number; social: number; caution: number; patience: number }
 /** How a creature sounds when it speaks aloud: a Kokoro voice, a speed, and a pitch for the browser's own voices. Every pet and the Teacher get a different one. */
@@ -57,6 +58,8 @@ export interface PetState {
   mode: PetMode;
   drives: Drives;
   bumped: boolean;
+  places?: PlaceMap; // the landmarks it knows and the runs between them, in its own frame (see places.ts)
+  enteredDoorway?: boolean; // set for one tick when it steps into a doorway
   anchors?: Record<string, { x: number; y: number }>; // where it reckoned each charger pad to be (by its hum), to correct drift
   room?: string; // the room it was in at the last tick (to count crossings)
   inDoorway?: boolean; // standing in a doorway right now (to note each passing once)

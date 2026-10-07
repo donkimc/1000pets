@@ -5,7 +5,7 @@
 git clone https://github.com/donkimc/1000pets.git
 cd 1000pets
 npm install
-npm test            # 257 tests (about 4 minutes)
+npm test            # 266 tests (about 4 minutes)
 # put keys in .env.local (git-ignored; copy .env.local.example), then:
 npm run dev     # http://localhost:3000, loads .env.local
 ```
@@ -89,6 +89,8 @@ The 3D view (`public/world3d.js`, three.js served from `/vendor/three`, `public/
 
 Voices (`public/voice.js`, all in the browser): Kokoro (speaking) and Whisper tiny (listening) are downloaded from a CDN once and cached. Every pet and the Teacher has its own voice (`voice` in `config/pets.json`, `VOICES` for new pets, `TEACHER_VOICE`), with pitch and speed for the browser's own voice, which is used while Kokoro loads, if it is switched off, or when Kokoro is not keeping up. You hear only what is near your avatar: loudness by distance and walls, panned to the side the speaker is on; "hear everyone" overrides that, and a pet answering you from far away comes over the radio (band-passed, with beeps). Talking is a walkie-talkie: hold the button (Talk tab, or the small mic in the 3D view, or the space bar), speak, let go; beeps mark the start and end; start with a pet's name to talk to that pet; the radio carries your voice anywhere. Tested in a real browser: Kokoro speaks clearly on the processor (about 3.5 seconds to make a second of speech while the page was also drawing 3D on a 4-core machine, hence the fallback), and Whisper tiny transcribed Kokoro's own speech correctly. On the graphics chip (WebGPU) Kokoro was fast (0.65 s per second) but the sound it produced was garbage (samples far outside -1 to 1), so that is opt-in, checked for sanity, and falls back to the processor.
 
+Places (`src/places.ts`): a pet makes a small map of its own, with no walls and no names. Its landmarks are the charger pads it has stood on (told apart by their hum) and the doorways it has stepped through; each is a point in its own dead-reckoned frame (pads are pulled to where it first reckoned them, doorways within 230 units are the same doorway). Between landmarks it remembers the way it actually walked, as breadcrumbs reduced to the turns that matter, kept only if the walk was no more than 4 times the straight distance, under 1800 units and within 30 minutes; a shorter way replaces a longer one. For each pad it counts the times charging began there; standing on a pad for a minute without charging gives that pad up for an hour. When the battery is low and no hum is leading it (there is none, or it is giving up on it), System 1 reads the map (action `go_to_place`): the cheapest known way from the landmark it last reached to the nearest pad (a little favouring ones it has charged at), then it walks that way landmark by landmark, going round things in the way and pushing doors open; no progress for 150 s gives that pad up for an hour. System 2's notes list the pads where its battery filled up (never called chargers: the pet is not told what a pad is) (hum, times charged, how long ago, roughly how far and which way) and how many doorways it knows; a claim that there is more than one charger is borne out once it has found two (`more than one pad`). The Pets tab draws the pet's own map (chargers with hum and times charged, doorways, the remembered runs, where it thinks it is, and the route it is walking). Measured (hum switched off, battery at 25%, pets wherever they happened to be, 48 trials over 2 seeds, after 3 simulated days of learning): with the map 37 of 48 reached a charger within 40 minutes (median 145 s and 495 s), without it 33 of 48 (median 675 s and 925 s). After about a day and a half a pet's map had exactly the 4 pads (by their 4 hum pitches) and 4 doorways of the house. Limits: a map is in the body's own frame, so it does not travel in brain files (a restored brain keeps no places); poses drift a little between pad visits; there is no way yet for pets to tell each other where a charger is, and a pet that has never seen another room knows nothing of it.
+
 Movement now slides along obstacles when blocked, and the obstacle ray treats other bodies as wide as they really are (both fixed deadlocks where pets pushed into each other forever).
 
 ## Running a local model well
@@ -96,9 +98,8 @@ Ollama (the macOS app) unloads a model after 5 idle minutes unless told otherwis
 
 ## Not done
 - Pets recognising each other by voice as well as look; Whisper is the tiny English model (small mistakes are likely; base is more accurate but slower to load); the Teacher cannot be spoken to by voice (the chat has no Teacher target yet)
-- Pets deliberately going to a remembered room when no hum is audible; the 3D view has no shadows and furniture is simple boxes
+- Pets telling each other where chargers are (claims about places, checked against experience); the 3D view has no shadows and furniture is simple boxes
 - More verifiable topics (only the ones above can be tested), and pets acting to test a claim themselves instead of waiting for experience
-- A System 1 rule that walks to a remembered place when the tone is not audible (scenes record where the charger was, but only System 2 knows)
 - One-tap 30-day accelerated run with progress and a summary report (skipped on purpose)
 - Pets passing on or comparing what they know of each other (gossip), and relationship effects beyond picking company
 - An "add pet" form (the `POST /api/pets` endpoint exists)

@@ -6,11 +6,12 @@ import { Rng } from "./rng.js";
 import type { Observation } from "./sensors.js";
 import { cueFor, cueTrust, novelty, startGoal } from "./cues.js";
 import { pickCompany } from "./relations.js";
+import { placeSteer } from "./places.js";
 import { ruleValue, type KnobName } from "./rules.js";
 
 export type Action =
   | "dormant" | "avoid" | "sleep" | "charge" | "seek_light"
-  | "approach_pet" | "socialize" | "approach_object" | "inspect" | "follow_tone" | "wander" | "pause" | "explore_door" | "open_door";
+  | "approach_pet" | "socialize" | "approach_object" | "inspect" | "follow_tone" | "wander" | "pause" | "explore_door" | "open_door" | "go_to_place";
 
 export interface Decision {
   action: Action;
@@ -116,6 +117,14 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
         startGoal(p, obs.tone, nowSec);
         return followTone(p, nowSec, obs.tone.bearing, trust.trusted ? `battery low and this tone has led me to charge before` : trust.tentative ? `battery low and I suspect this tone leads to charge` : `battery low and System 2 thinks the tone may help`, 0.9);
       }
+    }
+    // No hum to follow: use its own map. It remembers where it has charged, and walks there through the doorways it knows.
+    const way = placeSteer(p, nowSec);
+    if (way) {
+      p.s1.followedAt = nowSec; // so that being turned away by an obstacle makes it go round, as when following a tone
+      if (way.toDoor && way.distance < 140) s1.doorGoalUntil = nowSec + 30; // a shut door on the way gets pushed open
+      if (nowSec < (s1.detourUntil ?? 0)) return { action: "go_to_place", reason: "going round something in the way to a place I remember", forward: 0.7, turn: 0 };
+      return { action: "go_to_place", reason: way.reason, forward: Math.abs(way.bearing) > 1.2 ? 0.3 : 0.85, turn: clamp(way.bearing, -MAX_TURN, MAX_TURN) };
     }
     const worse = obs.light < prevLight - 1 || rng.chance(0.03);
     if (worse) return { action: "seek_light", reason: "light is dropping, trying another direction", forward: 0.6, turn: (rng.next() < 0.5 ? -1 : 1) * (1.2 + rng.next() * 1.4) };

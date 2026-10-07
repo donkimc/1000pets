@@ -160,7 +160,7 @@ export function forgetScenes(p: Pick<PetState, "mind">, now: number): number {
  * What the pet was told is checked against what it has experienced since. Where the statement is about something that can be
  * tested (see verify.ts) the evidence can support it or contradict it. Nothing else is ever guessed at: it stays unverified.
  */
-export function verifyClaims(p: Pick<PetState, "mind" | "predict">, now = 0): { supported: number; contradicted: number } {
+export function verifyClaims(p: Pick<PetState, "mind" | "predict" | "places">, now = 0): { supported: number; contradicted: number } {
   let supported = 0, contradicted = 0;
   for (const c of p.mind.claims) {
     if (c.status === "contradicted") {
@@ -199,7 +199,7 @@ export function verifyClaims(p: Pick<PetState, "mind" | "predict">, now = 0): { 
  * confidence is cut to 40%, it is flagged, and if it is still contradicted a few hours later it is let go and remembered as
  * something found to be wrong. Other beliefs rise with counted matching moments, and weak unsupported ones fade.
  */
-export function adjustBeliefs(p: Pick<PetState, "mind" | "predict">, now: number): { strengthened: number; faded: number; refuted: number } {
+export function adjustBeliefs(p: Pick<PetState, "mind" | "predict" | "places">, now: number): { strengthened: number; faded: number; refuted: number } {
   let strengthened = 0, faded = 0, refuted = 0;
   p.mind.beliefs = p.mind.beliefs.filter((b) => {
     if (b.verdict === "contradicted") {
@@ -262,7 +262,7 @@ export function adjustBeliefs(p: Pick<PetState, "mind" | "predict">, now: number
  * is cut and it is dropped if still contradicted hours later. Gists that say the same thing are merged, and when one denies
  * another the weaker is weakened (the evidence checks above are what really settle it).
  */
-export function reviseGists(p: Pick<PetState, "mind" | "predict">, now: number): { strengthened: number; dropped: number; conflicted: number } {
+export function reviseGists(p: Pick<PetState, "mind" | "predict" | "places">, now: number): { strengthened: number; dropped: number; conflicted: number } {
   let strengthened = 0, dropped = 0, conflicted = 0;
   p.mind.gists = p.mind.gists.filter((g) => {
     if (g.verdict === "contradicted") {
