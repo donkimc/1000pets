@@ -2,6 +2,10 @@
 // logs, thoughts) plus a small meta.json for the list. Loading copies it back over the live run folder.
 import { cp, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import { gunzip, gzip } from "node:zlib";
+import { promisify } from "node:util";
+
+const gzipAsync = promisify(gzip), gunzipAsync = promisify(gunzip);
 
 export interface SaveMeta {
   id: string;
@@ -17,6 +21,20 @@ export interface SaveMeta {
 
 const ID_RE = /^[a-z0-9][a-z0-9-]{0,80}$/;
 export const AUTO_BACKUPS_KEPT = 3;
+export const BUNDLE_FORMAT = "1000pets-save";
+export const BUNDLE_MAX_BYTES = 400 * 1024 * 1024; // the most an uploaded save may expand to
+const FILE_RE = /^(?:[a-z0-9_-]{1,40}\/){0,2}[A-Za-z0-9][A-Za-z0-9_.-]{0,59}\.jsonl?$/; // a log or state file, at most two folders down, nothing that climbs out
+const PET_ID_RE = /^[a-z0-9_-]{1,32}$/;
+
+async function walk(dir: string, base = ""): Promise<string[]> {
+  const out: string[] = [];
+  for (const e of await readdir(path.join(dir, base), { withFileTypes: true }).catch(() => [])) {
+    const rel = base ? `${base}/${e.name}` : e.name;
+    if (e.isDirectory()) out.push(...(await walk(dir, rel)));
+    else out.push(rel);
+  }
+  return out;
+}
 
 const slug = (s: string) => s.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "").slice(0, 40) || "save";
 
@@ -77,6 +95,69 @@ export class Saves {
     await writeFile(path.join(tmp, "meta.json"), JSON.stringify(meta, null, 2));
     await rename(tmp, this.path(id)); // appears in the list only once it is complete
     if (auto) await this.pruneAuto();
+    return meta;
+  }
+
+  /** A save as one file: everything in it (clock, world, pets, teacher, logs, thoughts) in a gzipped bundle, to keep or move to another machine. */
+  async exportBundle(id: string): Promise<Buffer> {
+    const meta = await this.get(id);
+    if (!meta) throw new Error("no such save");
+    const run = path.join(this.path(id), "run");
+    const files: { path: string; data: string }[] = [];
+    for (const rel of await walk(run)) {
+      if (!FILE_RE.test(rel)) continue; // (leftover temp files and anything unexpected stay behind)
+      files.push({ path: rel, data: await readFile(path.join(run, rel), "utf8") });
+    }
+    return gzipAsync(Buffer.from(JSON.stringify({ format: BUNDLE_FORMAT, version: 1, exportedAt: new Date().toISOString(), meta, files })));
+  }
+
+  /** Turn an uploaded bundle into a new save in the list (it does not touch the live simulation). Anything wrong with it is refused before a byte is kept. */
+  async importBundle(buf: Buffer, fallbackName = "Uploaded save"): Promise<SaveMeta> {
+    let b: any;
+    try {
+      b = JSON.parse((await gunzipAsync(buf, { maxOutputLength: BUNDLE_MAX_BYTES })).toString("utf8"));
+    } catch {
+      throw new Error("that is not a 1000pets save file");
+    }
+    if (!b || b.format !== BUNDLE_FORMAT || b.version !== 1 || !Array.isArray(b.files)) throw new Error("that is not a 1000pets save file");
+    if (b.files.length > 400) throw new Error("the save file has too many files");
+    const seen = new Map<string, string>();
+    for (const f of b.files) {
+      if (!f || typeof f.path !== "string" || typeof f.data !== "string" || !FILE_RE.test(f.path) || f.path.includes("..")) throw new Error(`the save file holds something unexpected (${String(f?.path).slice(0, 40)})`);
+      if (seen.has(f.path)) throw new Error("the save file lists a file twice");
+      seen.set(f.path, f.data);
+    }
+    const json = (name: string) => {
+      const text = seen.get(name);
+      if (text === undefined) throw new Error(`the save file is missing ${name}`);
+      try { return JSON.parse(text); } catch { throw new Error(`${name} in the save file is damaged`); }
+    };
+    const clock = json("clock.json"), world = json("world.json"), pets = json("pets.json");
+    if (!Number.isFinite(clock?.simMs) || !world || typeof world.env !== "object" || !Number.isFinite(world.simMinute) || !Array.isArray(pets?.pets) || !pets.pets.length || !pets.pets.every((p: any) => typeof p?.id === "string" && PET_ID_RE.test(p.id))) throw new Error("the save file does not hold a simulation I can read");
+    for (const [name, text] of seen) if (name.endsWith(".json") && !["clock.json", "world.json", "pets.json"].includes(name)) { try { JSON.parse(text); } catch { throw new Error(`${name} in the save file is damaged`); } }
+    const m = b.meta ?? {};
+    const name = `${String(m.name ?? fallbackName).slice(0, 44)} (uploaded)`;
+    await mkdir(this.dir, { recursive: true });
+    const stamp = new Date().toISOString().replace(/[-:T]/g, "").slice(0, 14);
+    let id = `${stamp}-${slug(name)}`;
+    for (let i = 2; await this.get(id); i++) id = `${stamp}-${slug(name)}-${i}`;
+    const tmp = path.join(this.dir, `.${id}.partial`);
+    await rm(tmp, { recursive: true, force: true });
+    for (const [rel, text] of seen) {
+      await mkdir(path.dirname(path.join(tmp, "run", rel)), { recursive: true });
+      await writeFile(path.join(tmp, "run", rel), text);
+    }
+    await mkdir(path.join(tmp, "run", "thoughts"), { recursive: true });
+    await mkdir(path.join(tmp, "run", "snapshots"), { recursive: true });
+    const meta: SaveMeta = {
+      id, name: name.slice(0, 60), createdAt: new Date().toISOString(),
+      simDay: Number.isFinite(m.simDay) ? Math.max(1, Math.round(m.simDay)) : Math.floor(clock.simMs / 86_400_000) + 1,
+      simTime: typeof m.simTime === "string" ? m.simTime.slice(0, 12) : "", speed: Number.isFinite(clock.speed) ? clock.speed : 1,
+      pets: Array.isArray(m.pets) ? m.pets.slice(0, 12).map((x: unknown) => String(x).slice(0, 30)) : pets.pets.map((p: any) => String(p.name ?? p.id).slice(0, 30)),
+      auto: false, bytes: await dirBytes(path.join(tmp, "run")),
+    };
+    await writeFile(path.join(tmp, "meta.json"), JSON.stringify(meta, null, 2));
+    await rename(tmp, this.path(id));
     return meta;
   }
 

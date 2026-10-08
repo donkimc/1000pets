@@ -89,6 +89,41 @@
     }).join("");
   }
 
+  // ---- spending: where the tokens go ----
+  const fmtTok = (n) => (n >= 1e6 ? (n / 1e6).toFixed(2) + " M" : n >= 1e3 ? (n / 1e3).toFixed(1) + " k" : String(Math.round(n)));
+  const fmtUsd = (v) => (v >= 1 ? "$" + v.toFixed(2) : v >= 0.01 ? "$" + v.toFixed(3) : "$" + v.toFixed(4));
+  const KIND_NAME = { thought: "Slow thought", deep: "Deep thought", reply: "Reply to someone", speech: "Speaking up", dream: "Dream narration", gist: "Night summary", "teacher-plan": "Teacher plan", "teacher-review": "Teacher review", "teacher-lesson": "Teacher lesson", "teacher-answer": "Teacher answer", other: "Other" };
+  const kindName = (k) => KIND_NAME[k] || k;
+
+  function renderSpending(u, d) {
+    const t = u.total, tokens = t.tokensIn + t.tokensOut;
+    const cachePct = t.tokensIn ? Math.round((t.cachedIn / t.tokensIn) * 100) : 0;
+    const b = u.budget, left = u.projection.hoursLeft;
+    $("spend-kpis").innerHTML = [
+      tile("All time", fmtTok(tokens) + " tokens", `${fmtTok(t.tokensIn)} in · ${fmtTok(t.tokensOut)} out · ${t.calls.toLocaleString()} calls${t.fails ? ` · ${t.fails} failed` : ""}`),
+      tile("Estimated cost", fmtUsd(t.costUsd), `${cachePct}% of input was cached by the provider`),
+      tile("Last hour", fmtTok(u.lastHour.tokens), `${u.lastHour.calls} calls · ${fmtUsd(u.lastHour.costUsd)}${u.paused ? " · paused" : ""}`),
+      u.projection.ready ? tile("At this pace", fmtUsd(u.projection.costPerDay) + " a day", `${fmtTok(u.projection.tokensPerDay)} tokens a day (real time)`) : tile("At this pace", "—", "needs about 10 calls in the last hour"),
+      b && b.budgetUsd != null ? tile("DeepSeek ceiling", fmtUsd(b.spentUsd) + " of " + fmtUsd(b.budgetUsd), left == null ? "no pace to project yet" : left < 1 ? "under an hour left at this pace" : `about ${left.toFixed(1)} h left at this pace${b.teacherSpentUsd ? ` · Teacher ${fmtUsd(b.teacherSpentUsd)} (not limited)` : ""}`) : tile("DeepSeek ceiling", "not in use", "no paid model configured"),
+    ].join("");
+    const maxTok = Math.max(1, ...u.byKind.map((k) => k.tokensIn + k.tokensOut));
+    const bar = (label, sub, v, max, color, right) => `<div class="mb-1.5"><div class="flex items-baseline gap-2 text-xs"><span class="w-32 text-slate-300 shrink-0">${esc(label)}</span><div class="flex-1 h-2 bg-slate-700/60 rounded"><div class="h-2" style="width:${Math.max(1, Math.round((v / max) * 100))}%;background:${color};border-radius:0 4px 4px 0"></div></div><span class="w-24 text-right tabular-nums">${right}</span></div><div class="text-xs text-mute ml-[8.5rem]">${sub}</div></div>`;
+    $("spend-kind").innerHTML = u.byKind.length ? u.byKind.map((k) => bar(kindName(k.kind), `${k.calls.toLocaleString()} calls · avg ${k.calls ? Math.round(k.tokensIn / k.calls) : 0} in + ${k.calls ? Math.round(k.tokensOut / k.calls) : 0} out · ${fmtUsd(k.costUsd)}${k.fails ? ` · ${k.fails} failed` : ""}`, k.tokensIn + k.tokensOut, maxTok, k.kind.startsWith("teacher") ? "#2dd4bf" : k.kind === "deep" ? "#9085e9" : "#6aa5b8", `${fmtTok(k.tokensIn + k.tokensOut)} (${Math.round(k.share * 100)}%)`)).join("") : '<div class="text-sm text-mute py-3 text-center">No model calls recorded yet.</div>';
+    const pets = Object.fromEntries(d.pets.map((p) => [p.id, p]));
+    const maxPet = Math.max(1, ...u.byPet.map((p) => p.tokensIn + p.tokensOut));
+    const maxProv = Math.max(1, ...u.byProvider.map((p) => p.tokensIn + p.tokensOut));
+    $("spend-pet").innerHTML = (u.byPet.map((p) => bar((pets[p.pet] || { name: p.pet }).name, `${p.calls.toLocaleString()} calls · ${fmtUsd(p.costUsd)}`, p.tokensIn + p.tokensOut, maxPet, (pets[p.pet] || { color: "#999" }).color, fmtTok(p.tokensIn + p.tokensOut))).join("") || '<div class="text-sm text-mute">nothing yet</div>') +
+      `<div class="text-xs text-mute mt-3 mb-1">By model</div>` + u.byProvider.map((p) => bar(p.provider, `${p.calls.toLocaleString()} calls · ${fmtUsd(p.costUsd)}${p.fails ? ` · ${p.fails} failed` : ""}`, p.tokensIn + p.tokensOut, maxProv, p.provider === "local" ? "#8b95a1" : "#c98500", fmtTok(p.tokensIn + p.tokensOut))).join("");
+    lineChart($("chart-spend-day"), {
+      title: "Tokens per simulated day", yFmt: (v) => fmtTok(v), area: true,
+      series: [{ name: "Tokens", color: "#6aa5b8" }],
+      rows: u.perDay.map((r) => ({ x: r.day, label: "D" + r.day, values: [r.tokens] })),
+    });
+    const ago = (at) => { const s = Math.max(0, Math.round((Date.now() - at) / 1000)); return s < 90 ? s + " s" : s < 5400 ? Math.round(s / 60) + " min" : (s / 3600).toFixed(1) + " h"; };
+    $("spend-recent").innerHTML = `<table class="w-full text-xs"><thead><tr class="text-mute text-left"><th class="font-normal pr-2">When</th><th class="font-normal pr-2">For</th><th class="font-normal pr-2">Pet</th><th class="font-normal pr-2">Model</th><th class="font-normal text-right pr-2">In → out</th><th class="font-normal text-right">Time</th></tr></thead><tbody>` +
+      u.recent.slice(0, 15).map((r) => `<tr class="border-t border-line ${r.ok ? "" : "text-amber-300"}"><td class="py-0.5 pr-2 whitespace-nowrap">${ago(r.at)} ago</td><td class="pr-2">${esc(kindName(r.kind))}</td><td class="pr-2">${esc(r.pet ? (pets[r.pet] || { name: r.pet }).name : "")}</td><td class="pr-2">${esc(r.provider)}</td><td class="text-right pr-2 tabular-nums">${r.ok ? `${r.tokensIn} → ${r.tokensOut}${r.cachedIn ? ` (${r.cachedIn} cached)` : ""}` : esc(r.error || "failed")}</td><td class="text-right tabular-nums">${(r.ms / 1000).toFixed(1)} s</td></tr>`).join("") + "</tbody></table>";
+  }
+
   // ---- rooms: where the pets are and have been (only when the house has more than one room) ----
   const FLOOR_COLOR = { wood: "#b08d57", tile: "#5fa8c0", carpet: "#a58ad0", stone: "#8b95a1" };
   const ROOM_ORDER = (d) => d.rooms.map((r) => r.id);
@@ -228,11 +263,11 @@
   }
 
   async function loadDash() {
-    const [d, llm, rows] = await Promise.all([fetch("/api/dashboard").then((r) => r.json()), fetch("/api/llm").then((r) => r.json()), fetch(`/api/metrics?hours=${rangeHours}`).then((r) => r.json())]);
+    const [d, llm, rows, usage] = await Promise.all([fetch("/api/dashboard").then((r) => r.json()), fetch("/api/llm").then((r) => r.json()), fetch(`/api/metrics?hours=${rangeHours}`).then((r) => r.json()), fetch("/api/usage").then((r) => r.json())]);
     dash = d;
     const sel = $("needs-pet");
     if (sel.options.length !== d.pets.length) { sel.innerHTML = d.pets.map((p) => `<option value="${p.id}">${esc(p.name)}</option>`).join(""); }
-    renderKpis(d, llm); renderCharts(d, rows); renderActivity(d); renderRooms(d, rows); renderSpeech(d); renderStorage(d);
+    renderKpis(d, llm); renderCharts(d, rows); renderSpending(usage, d); renderActivity(d); renderRooms(d, rows); renderSpeech(d); renderStorage(d);
     chips($("range"), [[6, "6 h"], [24, "24 h"], [168, "7 days"], [720, "30 days"]], rangeHours, (v) => { rangeHours = Number(v); loadDash(); });
     chips($("tpet"), [["", "All pets"], ...d.pets.map((p) => [p.id, p.name])], thoughtPet, (v) => { thoughtPet = v; loadDash(); });
     chips($("tsys"), [[0, "All"], [1, "S1 fast"], [2, "S2 slow"], [3, "S3 sleep"]], thoughtSys, (v) => { thoughtSys = Number(v); loadDash(); });

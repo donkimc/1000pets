@@ -90,3 +90,77 @@ test("brain library saves, lists, reads and deletes", async () => {
   await lib.remove(id);
   assert.equal((await lib.list()).length, 1);
 });
+
+import { gzipSync, gunzipSync } from "node:zlib";
+import { BUNDLE_FORMAT } from "./saves.js";
+
+async function realRun() {
+  const data = await mkdtemp(path.join(tmpdir(), "saves-"));
+  const store = await Store.open(data, "main");
+  await store.writeJson("clock.json", { simMs: 90_000_000, speed: 10, paused: true });
+  await store.writeJson("world.json", { simMinute: 1500, env: { weather: "clear" } });
+  await store.writeJson("pets.json", { simSec: 90000, pets: [{ id: "pip", name: "Pip" }, { id: "moss", name: "Moss" }] });
+  await store.writeJson("teacher.json", { plan: null });
+  await store.append("events", { type: "a" });
+  await writeFile(path.join(store.dir, "thoughts", "pip.jsonl"), '{"t":1}\n{"t":2}\n');
+  await writeFile(path.join(store.dir, "clock.json.123.tmp"), "half written");
+  return { data, store, saves: new Saves(data) };
+}
+const bundleOf = (obj: unknown) => gzipSync(Buffer.from(JSON.stringify(obj)));
+const good = (files: { path: string; data: string }[] = []) => ({
+  format: BUNDLE_FORMAT, version: 1, meta: { name: "Day 2", simDay: 2, simTime: "D2 01:00", pets: ["Pip", "Moss"] },
+  files: [
+    { path: "clock.json", data: '{"simMs":1000,"speed":1}' }, { path: "world.json", data: '{"simMinute":5,"env":{}}' },
+    { path: "pets.json", data: '{"pets":[{"id":"pip","name":"Pip"}]}' }, ...files,
+  ],
+});
+
+test("a save downloads as one file and comes back as an identical save", async () => {
+  const { store, saves } = await realRun();
+  const m = await saves.create(store.dir, "Day two", info);
+  const file = await saves.exportBundle(m.id);
+  const inside = JSON.parse(gunzipSync(file).toString());
+  assert.equal(inside.format, BUNDLE_FORMAT);
+  const names = inside.files.map((f: any) => f.path).sort();
+  assert.ok(names.includes("clock.json") && names.includes("thoughts/pip.jsonl") && names.includes("events.jsonl"));
+  assert.ok(!names.some((n: string) => n.endsWith(".tmp")), "half-written leftovers are not exported");
+
+  const other = new Saves(await mkdtemp(path.join(tmpdir(), "saves-")));
+  const got = await other.importBundle(file);
+  assert.match(got.name, /Day two \(uploaded\)/);
+  assert.deepEqual(got.pets, ["Pip"]);
+  assert.equal(got.auto, false);
+  assert.equal((await other.list()).length, 1);
+  assert.equal(await readFile(path.join(other.dir, got.id, "run", "thoughts", "pip.jsonl"), "utf8"), '{"t":1}\n{"t":2}\n');
+  assert.equal(JSON.parse(await readFile(path.join(other.dir, got.id, "run", "clock.json"), "utf8")).paused, true);
+  // and it can be loaded like any other save
+  const run = await Store.open(await mkdtemp(path.join(tmpdir(), "run-")), "main");
+  await other.restore(got.id, run.dir);
+  assert.equal(JSON.parse(await readFile(path.join(run.dir, "pets.json"), "utf8")).pets.length, 2);
+});
+
+test("a file that is not a save, or is damaged, is refused and leaves nothing behind", async () => {
+  const saves = new Saves(await mkdtemp(path.join(tmpdir(), "saves-")));
+  await assert.rejects(saves.importBundle(Buffer.from("hello")), /not a 1000pets save file/);
+  await assert.rejects(saves.importBundle(bundleOf({ format: "other", version: 1, files: [] })), /not a 1000pets save file/);
+  await assert.rejects(saves.importBundle(bundleOf({ ...good(), version: 2 })), /not a 1000pets save file/);
+  const noClock = good(); noClock.files = noClock.files.filter((f) => f.path !== "clock.json");
+  await assert.rejects(saves.importBundle(bundleOf(noClock)), /missing clock.json/);
+  await assert.rejects(saves.importBundle(bundleOf(good([{ path: "events.jsonl", data: "{}" }, { path: "events.jsonl", data: "{}" }]))), /twice/);
+  const broken = good(); broken.files[1] = { path: "world.json", data: "{not json" };
+  await assert.rejects(saves.importBundle(bundleOf(broken)), /world.json in the save file is damaged/);
+  const noPets = good(); noPets.files[2] = { path: "pets.json", data: '{"pets":[]}' };
+  await assert.rejects(saves.importBundle(bundleOf(noPets)), /does not hold a simulation/);
+  const badId = good(); badId.files[2] = { path: "pets.json", data: '{"pets":[{"id":"../x"}]}' };
+  await assert.rejects(saves.importBundle(bundleOf(badId)), /does not hold a simulation/);
+  assert.deepEqual(await saves.list(), []);
+  assert.deepEqual((await readdir(saves.dir).catch(() => [])).filter((n) => !n.startsWith(".") || n.endsWith(".partial")), []);
+});
+
+test("a bundle cannot write outside the save, or anything but logs and state files", async () => {
+  const saves = new Saves(await mkdtemp(path.join(tmpdir(), "saves-")));
+  for (const bad of ["../evil.json", "/etc/passwd.json", "thoughts/../../evil.json", "a/b/c/d.json", "run.sh", "notes.txt", "x\\y.json", ".hidden.json"]) {
+    await assert.rejects(saves.importBundle(bundleOf(good([{ path: bad, data: "{}" }]))), /something unexpected/, bad);
+  }
+  assert.deepEqual(await saves.list(), []);
+});

@@ -18,7 +18,32 @@ export interface ProviderConfig {
   maxConcurrent?: number; // calls allowed at once; when full the provider counts as busy and the next one is tried
 }
 
-export interface LlmResult { text: string; provider: string; model: string; tokensIn: number; tokensOut: number }
+export interface LlmResult {
+  text: string; provider: string; model: string; tokensIn: number; tokensOut: number;
+  cachedIn?: number; // input tokens the provider served from its prompt cache (billed at a fraction), where it says
+  costUsd?: number; // estimated from the list price
+  ms?: number; // how long the call took
+}
+
+/** What a call was for, so spending can be told apart: "thought", "deep", "reply", "speech", "dream", "gist", "teacher-plan", ... */
+export interface CallTag { kind: string; pet?: string }
+
+/** One finished (or failed) attempt at one provider, as handed to `onCall`. */
+export interface CallRecord {
+  at: number; // epoch ms
+  kind: string;
+  pet?: string;
+  provider: string;
+  model: string;
+  ok: boolean;
+  teacher: boolean;
+  tokensIn: number;
+  tokensOut: number;
+  cachedIn: number;
+  costUsd: number;
+  ms: number;
+  error?: string;
+}
 
 export interface ProviderStats {
   name: string;
@@ -47,12 +72,15 @@ export interface CompleteOpts {
   providers?: string[]; // only these providers, in this order
   account?: "teacher"; // teacher calls are tracked separately and ignore the budget ceiling
   waitMs?: number; // if every provider is merely busy (not failing), wait up to this long for one to free up instead of giving up
+  tag?: CallTag; // what the call is for (spending is reported by it)
   patienceMs?: number; // join the line for the first (preferred) provider if it is busy, up to this long, before trying the others; first come, first served
 }
 
 type FetchFn = typeof fetch;
 
 export class LlmGateway {
+  /** Called after every attempt at a provider, successful or not (the usage ledger listens). */
+  onCall?: (rec: CallRecord) => void;
   private stats = new Map<string, ProviderStats>();
   private recent = new Map<string, number[]>(); // request timestamps for the rpm ceiling
   private consecutiveErrors = new Map<string, number>();
@@ -172,10 +200,15 @@ export class LlmGateway {
           busy = true;
           continue;
         }
+        const t0 = Date.now();
         try {
-          return await this.callProvider(p, messages, opts);
+          const r = await this.callProvider(p, messages, opts);
+          r.ms = Date.now() - t0;
+          this.report(p, opts, r, r.ms);
+          return r;
         } catch (e: any) {
           reasons.push(`${p.name}: ${e.message}`);
+          this.report(p, opts, null, Date.now() - t0, e.message);
         } finally {
           this.release(p);
         }
@@ -186,6 +219,19 @@ export class LlmGateway {
         continue;
       }
       throw new LlmUnavailable(reasons.join("; ") || "no providers configured");
+    }
+  }
+
+  private report(p: ProviderConfig, opts: CompleteOpts, r: LlmResult | null, ms: number, error?: string) {
+    if (!this.onCall) return;
+    try {
+      this.onCall({
+        at: this.now(), kind: opts.tag?.kind ?? "other", ...(opts.tag?.pet ? { pet: opts.tag.pet } : {}), provider: p.name, model: p.model,
+        ok: !!r, teacher: opts.account === "teacher", tokensIn: r?.tokensIn ?? 0, tokensOut: r?.tokensOut ?? 0, cachedIn: r?.cachedIn ?? 0, costUsd: r?.costUsd ?? 0, ms,
+        ...(error ? { error: String(error).slice(0, 80) } : {}),
+      });
+    } catch (e) {
+      console.warn("usage ledger failed", e);
     }
   }
 
@@ -264,6 +310,8 @@ export class LlmGateway {
     this.consecutiveErrors.set(p.name, 0);
     const tokensIn = Number(data?.usage?.prompt_tokens) || 0;
     const tokensOut = Number(data?.usage?.completion_tokens) || 0;
+    // DeepSeek reports how much of the prompt it had cached; others use the OpenAI field names.
+    const cachedIn = Number(data?.usage?.prompt_cache_hit_tokens ?? data?.usage?.prompt_tokens_details?.cached_tokens) || 0;
     st.calls++;
     st.tokensIn += tokensIn;
     st.tokensOut += tokensOut;
@@ -272,7 +320,7 @@ export class LlmGateway {
       st.teacherCalls++;
       st.teacherSpendUsd += cost;
     } else st.spendUsd += cost;
-    return { text, provider: p.name, model: p.model, tokensIn, tokensOut };
+    return { text, provider: p.name, model: p.model, tokensIn, tokensOut, cachedIn, costUsd: cost };
   }
 }
 

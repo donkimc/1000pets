@@ -148,6 +148,12 @@
 <section class="bg-panel rounded-xl p-4 mb-3">
   <h2 class="text-xs uppercase tracking-wider text-mute mb-2">Save the simulation</h2>
   <div class="flex gap-2"><input id="save-name" maxlength="60" autocomplete="off" placeholder="Name (e.g. Day 3, before the heater test)" class="flex-1 min-w-0 bg-slate-700 rounded-lg px-3 py-2 text-base outline-none focus:ring-1 focus:ring-accent"><button id="save-go" class="px-4 rounded-lg bg-accent text-emerald-950 font-semibold">Save</button></div>
+  <div class="flex flex-wrap gap-2 mt-2">
+    <button id="save-dl" class="px-3 py-2 rounded-lg bg-slate-700 active:bg-slate-600 text-sm">Save and download a file</button>
+    <button id="save-up" class="px-3 py-2 rounded-lg bg-slate-700 active:bg-slate-600 text-sm">Load from a file…</button>
+    <input id="save-file" type="file" accept=".1000pets,.gz,application/gzip" class="hidden">
+  </div>
+  <p class="text-xs text-mute mt-2">A file holds the whole simulation (world, pets, teacher, history, thoughts). Keep it, move it to another machine (say, from the hosted site to your own), and load it there. Loading a file adds it to the list below, then asks before it replaces the live world.</p>
   <div id="save-note" class="text-xs text-mute mt-2 min-h-4"></div>
 </section>
 <section class="bg-panel rounded-xl p-4 mb-3">
@@ -185,6 +191,10 @@
 <section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Sunlight</h2><div id="chart-sun"></div></section>
 
 <section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">What each pet spends its time on</h2><div id="activity"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Spending <span class="normal-case">(every model call: what it was for, its tokens and estimated cost)</span></h2><div id="spend-kpis" class="grid grid-cols-2 gap-2 mb-3"></div><div id="spend-kind"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Spending by pet and by model</h2><div id="spend-pet"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Tokens per simulated day</h2><div id="chart-spend-day"></div></section>
+<section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Latest model calls</h2><div id="spend-recent" class="overflow-x-auto"></div></section>
 <div id="rooms-dash" class="hidden">
 <section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Rooms right now</h2><div id="room-now"></div></section>
 <section class="bg-panel rounded-xl p-4 mb-3"><h2 class="text-xs uppercase tracking-wider text-mute mb-2">Where each pet spends its time</h2><div id="room-time"></div></section>
@@ -240,7 +250,7 @@ function render() {
   if (!state) return;
   $("time").textContent = `Day ${state.day} · ${pad(state.hour)}:${pad(state.minute)}:${pad(state.second || 0)}`;
   $("meta").textContent = `${state.speed}× speed${state.paused ? " · paused" : ""}`;
-  $("pause").textContent = state.paused ? "Resume" : "Pause";
+  $("pause").textContent = state.paused ? (state.resumeNeedsPassword ? "Resume (password)" : "Resume") : "Pause";
   document.querySelectorAll("#speeds button").forEach((b) => {
     const on = Number(b.dataset.s) === state.speed;
     b.classList.toggle("bg-accent", on); b.classList.toggle("text-emerald-950", on);
@@ -522,7 +532,17 @@ for (const s of SPEEDS) {
   b.onclick = () => post("/api/speed", { speed: s });
   $("speeds").appendChild(b);
 }
-$("pause").onclick = () => post("/api/pause", { paused: !(state && state.paused) });
+// Resuming asks for the password (the page remembers it for this tab once it has been right).
+$("pause").onclick = async () => {
+  const resume = !!(state && state.paused);
+  if (!resume) return post("/api/pause", { paused: true });
+  let password = "";
+  try { password = sessionStorage.getItem("resumePw") || ""; } catch { /* private mode */ }
+  if (state.resumeNeedsPassword && !password) { password = prompt("Password to resume the simulation") || ""; if (!password) return; }
+  const r = await fetch("/api/pause", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ paused: false, password }) });
+  if (r.status === 403) { try { sessionStorage.removeItem("resumePw"); } catch { /* private mode */ } $("meta").textContent = "Wrong password: the simulation stays paused."; return; }
+  if (r.ok) { try { if (password) sessionStorage.setItem("resumePw", password); } catch { /* private mode */ } state = { ...state, ...(await r.json()) }; render(); }
+};
 
 Promise.all([fetch("/api/status").then((r) => r.json()), fetch("/api/world").then((r) => r.json()), fetch("/api/events?limit=40").then((r) => r.json())])
   .then(([s, w, evs]) => { layout = w.layout; state = { ...s, env: w.env, rooms: w.rooms, doors: w.doors, sunPatch: w.sunPatch, sunPatches: w.sunPatches, pets: w.pets, human: w.human, teacher: w.teacher }; evs.reverse().forEach((e) => addEvent(e, false)); render(); });

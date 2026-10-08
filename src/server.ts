@@ -14,6 +14,7 @@ import { predictView } from "./predict.js";
 import { resetRules, ruleView } from "./rules.js";
 import { Consolidator } from "./sleep.js";
 import { Dreamer } from "./dreams.js";
+import { UsageLedger, type UsageData } from "./usage.js";
 import { readFileSync } from "node:fs";
 import { Simulation, type SimSnapshot } from "./sim.js";
 import { TEACHER_VOICE, hueOf, type PetDef } from "./pet.js";
@@ -32,6 +33,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PORT = Number(process.env.PORT ?? 3000);
 const DATA_DIR = process.env.DATA_DIR ?? path.join(process.cwd(), "data");
 const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
+// Resuming the simulation needs this password (pausing never does). It is only there so a restart or a stranger cannot start the world and spend model calls:
+// plain text, no accounts, no lockout. Set RESUME_PASSWORD to something else, or to nothing at all to switch it off.
+const RESUME_PASSWORD = process.env.RESUME_PASSWORD ?? "1234";
+// A hosted copy never starts running by itself. (Railway sets one of these; START_PAUSED=off overrides, START_PAUSED=on forces it anywhere.)
+const HOSTED = !!(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
 const RUN_ID = process.env.RUN_ID ?? "main";
 const SEED = Number(process.env.SEED ?? 12345);
 
@@ -44,6 +50,10 @@ const defaultRoster: PetDef[] = JSON.parse(readFileSync(path.join(__dirname, "..
 // The language-model gateway outlives any single session. Spend is kept outside the run folder, so loading an
 // old save can never rewind the DeepSeek ceiling.
 const llm = gatewayFromEnv();
+llm.onCall = (rec) => {
+  ledger.add(rec, clock ? clock.parts.day : 1);
+  if (store) void store.append("llm-calls", { ...rec, ...(clock ? { day: clock.parts.day, hour: clock.parts.hour, minute: clock.parts.minute } : {}) }).catch(() => {});
+};
 llm.restore((await globalStore.readJson<ProviderStats[]>("llm-spend.json")) ?? (await store.readJson<ProviderStats[]>("llm.json")));
 console.log(`LLM providers: ${llm.snapshot().map((p) => `${p.name}(${p.model}${p.budgetUsd !== undefined ? `, ceiling $${p.budgetUsd}` : ""})`).join(", ") || "none"}`);
 
@@ -85,6 +95,7 @@ function broadcast(payload: unknown) {
 // ---- the live session: clock, world, pets, teacher. Replaced as a whole when a save is loaded. ----
 let clock!: SimClock;
 let world!: World;
+let ledger = new UsageLedger(); // what the models were asked and what it cost (see usage.ts); replaced when a run is loaded
 let sim!: Simulation;
 let system2!: System2;
 let conversation!: Conversation;
@@ -134,6 +145,7 @@ const envControl: EnvControl = {
 
 /** Build the live session from the files in the run folder (or from scratch when there are none). */
 async function loadSession() {
+  ledger = UsageLedger.from(await store.readJson<UsageData>("llm-usage.json"));
   const savedClock = await store.readJson<{ simMs: number; speed: number; paused?: boolean }>("clock.json");
   const savedWorld = await store.readJson<WorldSnapshot>("world.json");
   const savedSim = await store.readJson<SimSnapshot>("pets.json");
@@ -146,7 +158,7 @@ async function loadSession() {
   clock = new SimClock(savedClock?.simMs ?? 0);
   if (savedClock && (SPEEDS as readonly number[]).includes(savedClock.speed)) clock.speed = savedClock.speed;
   // A paused world stays paused across restarts and deploys (it used to come back running and spend model calls). START_PAUSED=on makes every start paused.
-  if (process.env.START_PAUSED === "on" || savedClock?.paused) clock.setPaused(true);
+  if (process.env.START_PAUSED === "on" || (HOSTED && process.env.START_PAUSED !== "off") || savedClock?.paused) clock.setPaused(true);
   // A new run lives in the house. A run saved in the old single room stays there, unless LAYOUT=house moves it into the house.
   const layout = LAYOUTS[process.env.LAYOUT ?? savedWorld?.layoutId ?? (savedWorld ? "legacy" : "house")] ?? HOUSE;
   world = new World(SEED, savedWorld ?? undefined, layout);
@@ -170,7 +182,7 @@ async function loadSession() {
 await loadSession();
 
 function status() {
-  return { runId: RUN_ID, simTimeMs: clock.simTimeMs, ...clock.parts, speed: clock.speed, paused: clock.paused };
+  return { runId: RUN_ID, simTimeMs: clock.simTimeMs, ...clock.parts, speed: clock.speed, paused: clock.paused, resumeNeedsPassword: !!RESUME_PASSWORD };
 }
 
 function petView() {
@@ -290,6 +302,10 @@ app.get("/api/llm/test/:provider", async (req, res) => {
   lastPing.set(name, Date.now());
   res.json(await llm.ping(name));
 });
+app.get("/api/usage", (_req, res) => {
+  const ds = llm.snapshot().find((p) => p.name === "deepseek");
+  res.json({ ...ledger.view(Date.now(), ds && ds.budgetUsd !== undefined ? { budgetUsd: ds.budgetUsd, spentUsd: ds.spendUsd } : undefined), budget: ds ? { provider: "deepseek", budgetUsd: ds.budgetUsd ?? null, spentUsd: ds.spendUsd, teacherSpentUsd: ds.teacherSpendUsd } : null, speed: clock.speed, paused: clock.paused });
+});
 app.get("/api/llm", (_req, res) => {
   const now = Date.now();
   res.json({ enabled: llm.enabled, providers: llm.snapshot().map((s) => ({ ...s, cooldownSec: Math.max(0, Math.round((s.cooldownUntil - now) / 1000)) })) });
@@ -311,7 +327,12 @@ app.post("/api/speed", requireAdmin, async (req, res) => {
 });
 
 app.post("/api/pause", requireAdmin, async (req, res) => {
-  clock.setPaused(Boolean(req.body?.paused));
+  const pause = Boolean(req.body?.paused);
+  if (!pause && RESUME_PASSWORD && String(req.body?.password ?? "") !== RESUME_PASSWORD) {
+    res.status(403).json({ error: "wrong password" });
+    return;
+  }
+  clock.setPaused(pause);
   await store.append("events", { type: clock.paused ? "paused" : "resumed", detail: "", ...clock.parts });
   res.json(status());
 });
@@ -487,6 +508,32 @@ app.post("/api/saves", requireAdmin, async (req, res) => {
   }
   res.json(await createSave(name));
 });
+// A save as one file you can keep, and load back later (here or on another machine).
+app.get("/api/saves/:id/download", async (req, res) => {
+  try {
+    const meta = await saves.get(req.params.id);
+    if (!meta) throw new Error("no such save");
+    const buf = await saves.exportBundle(meta.id);
+    res.setHeader("content-type", "application/gzip");
+    res.setHeader("content-disposition", `attachment; filename="1000pets-${meta.id}.1000pets"`);
+    res.send(buf);
+  } catch (e: any) {
+    res.status(404).json({ error: e.message });
+  }
+});
+app.post("/api/saves/import", requireAdmin, express.raw({ type: () => true, limit: "300mb" }), async (req, res) => {
+  if (loading) {
+    res.status(409).json({ error: "busy loading a save" });
+    return;
+  }
+  try {
+    const body = req.body as Buffer;
+    if (!Buffer.isBuffer(body) || !body.length) throw new Error("no file was sent");
+    res.json(await saves.importBundle(body, decodeURIComponent(String(req.header("x-file-name") ?? "")).replace(/\.1000pets$/i, "").slice(0, 44) || undefined));
+  } catch (e: any) {
+    res.status(400).json({ error: e.message });
+  }
+});
 app.post("/api/saves/:id/rename", requireAdmin, async (req, res) => {
   try {
     res.json(await saves.rename(req.params.id, String(req.body?.name ?? "").trim() || "Untitled"));
@@ -661,6 +708,7 @@ setInterval(() => {
 }, 250);
 
 async function save() {
+  await store.writeJson("llm-usage.json", ledger.data);
   await store.writeJson("clock.json", { simMs: clock.simTimeMs, speed: clock.speed, paused: clock.paused });
   await store.writeJson("world.json", world.snap);
   await store.writeJson("pets.json", sim.snapshot());

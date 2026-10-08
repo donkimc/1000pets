@@ -182,7 +182,7 @@
     el("save-list").innerHTML = saves.map((s) =>
       `<li class="rounded-lg bg-ink/60 p-3" data-save="${esc(s.id)}"><div class="flex items-baseline gap-2"><span class="font-semibold flex-1 break-words">${esc(s.name)}</span>${s.auto ? '<span class="text-xs text-mute">auto backup</span>' : ""}</div>` +
       `<div class="text-xs text-mute">${esc(s.simTime)} · ${esc((s.pets || []).join(", "))} · ${bytes(s.bytes)} · saved ${new Date(s.createdAt).toLocaleString()}</div>` +
-      `<div class="flex gap-2 mt-2"><button data-load class="${BTN} flex-1">Load</button><button data-rename class="${BTN}">Rename</button><button data-del class="${BTN} text-red-300">Delete</button></div></li>`).join("") || '<li class="text-mute">No saves yet.</li>';
+      `<div class="flex gap-2 mt-2"><button data-load class="${BTN} flex-1">Load</button><a href="/api/saves/${esc(s.id)}/download" download class="${BTN}">Download</a><button data-rename class="${BTN}">Rename</button><button data-del class="${BTN} text-red-300">Delete</button></div></li>`).join("") || '<li class="text-mute">No saves yet.</li>';
     el("brain-list").innerHTML = brains.map((b) =>
       `<li class="rounded-lg bg-ink/60 p-3" data-brain="${esc(b.id)}"><div class="font-semibold break-words">${esc(b.label)}</div>` +
       `<div class="text-xs text-mute">${esc(b.name)} · day ${b.simDay} · ${bytes(b.bytes)} · ${b.savedAt ? new Date(b.savedAt).toLocaleString() : ""}</div>` +
@@ -196,6 +196,28 @@
       const btn = el("save-go"); btn.disabled = true; note("save-note", "saving…");
       try { const s = await api("POST", "/api/saves", { name: el("save-name").value.trim() }); el("save-name").value = ""; note("save-note", `Saved “${s.name}” at ${s.simTime}.`); await loadSaves(); }
       catch (e) { note("save-note", e.message); } finally { btn.disabled = false; }
+    };
+    const download = (id) => { const a = document.createElement("a"); a.href = `/api/saves/${id}/download`; a.download = ""; document.body.appendChild(a); a.click(); a.remove(); };
+    el("save-dl").onclick = async () => {
+      const btn = el("save-dl"); btn.disabled = true; note("save-note", "saving…");
+      try { const s = await api("POST", "/api/saves", { name: el("save-name").value.trim() }); el("save-name").value = ""; note("save-note", `Saved “${s.name}” at ${s.simTime}; the file is downloading.`); await loadSaves(); download(s.id); }
+      catch (e) { note("save-note", e.message); } finally { btn.disabled = false; }
+    };
+    el("save-up").onclick = () => el("save-file").click();
+    el("save-file").onchange = async (e) => {
+      const f = e.target.files && e.target.files[0]; e.target.value = ""; if (!f) return;
+      if (f.size > 300 * 1048576) { note("save-note", "That file is bigger than the 300 MB limit."); return; }
+      const btn = el("save-up"); btn.disabled = true; note("save-note", `reading ${f.name} (${bytes(f.size)})…`);
+      try {
+        const r = await fetch("/api/saves/import", { method: "POST", headers: { "content-type": "application/octet-stream", "x-file-name": encodeURIComponent(f.name) }, body: f });
+        const d = await r.json().catch(() => ({}));
+        if (!r.ok) throw new Error(d.error || `upload failed (${r.status})`);
+        await loadSaves();
+        note("save-note", `Added “${d.name}” (${d.simTime || "day " + d.simDay}, ${(d.pets || []).join(", ")}).`);
+        if (confirm(`Load “${d.name}” now? This replaces the live simulation (a backup of it is kept) and leaves it paused. Press Cancel to keep it in the list for later.`)) {
+          note("save-note", "loading…"); await api("POST", `/api/saves/${d.id}/load`, {}); // the server tells every page to reload
+        }
+      } catch (err) { note("save-note", err.message); } finally { btn.disabled = false; }
     };
     el("save-list").onclick = async (e) => {
       const li = e.target.closest("[data-save]"); if (!li) return;
