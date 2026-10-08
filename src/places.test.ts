@@ -152,3 +152,22 @@ test("its notes say which chargers it remembers; and a claim that there is more 
   assert.equal(lines.filter((l) => /^- a pad/.test(l)).length, 2);
   assert.equal(keyHz("tone:29"), 534);
 });
+
+test("a map saved by an older version (no breadcrumbs, no turns on its runs, a route from before) still loads and keeps running", () => {
+  const sim = new Simulation(new World(1, undefined, HOUSE), 1, roster);
+  const snap = JSON.parse(JSON.stringify(sim.snapshot()));
+  snap.pets[0].places = {
+    nodes: { p1: { id: "p1", kind: "pad", x: 0, y: 0, key: "tone:29", visits: 2, charged: 1, firstSec: 0, lastSec: 10 }, d2: { id: "d2", kind: "door", x: 300, y: 0, visits: 1, charged: 0, firstSec: 0, lastSec: 5 } },
+    edges: [{ a: "p1", b: "d2", len: 300, n: 1, lastSec: 5 }], last: "d2", lastSec: 20, travel: 0, route: { to: "p1", path: ["d2", "p1"], step: 1, sinceSec: 0, lastDist: 100, lastProgressSec: 0 }, avoid: {}, seq: 2,
+  };
+  const again = new Simulation(new World(1, undefined, HOUSE), 1, roster, snap);
+  const p = again.pets[0];
+  assert.deepEqual(p.places!.trail, [], "the missing breadcrumbs are filled in");
+  assert.deepEqual(p.places!.edges[0].via, [], "a run from before has no turns, which means a straight line");
+  assert.equal(p.places!.route, null, "a route planned by the old version is dropped and planned again");
+  for (let s = 5; s <= 600; s += 5) again.step(s * 1000); // and nothing throws
+  const q = pet(); q.places = { nodes: {}, edges: [], last: null, lastSec: 0, travel: 0, route: null, avoid: {}, seq: 0 } as any; // even if it is missing the trail only
+  delete (q.places as any).trail;
+  observePlaces(q, { tone: null }, 0, false);
+  assert.deepEqual(q.places!.trail, []);
+});

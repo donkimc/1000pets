@@ -225,7 +225,7 @@ export class Dreamer {
   async narrate(p: PetState, d: Dream): Promise<void> {
     const { system, user } = buildDreamPrompt(p, d);
     const r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: user }], {
-      maxTokens: 260, temperature: 0.95, timeoutMs: this.opts.timeoutMs ?? 240_000,
+      maxTokens: 260, temperature: 0.95, tag: { kind: "dream", pet: p.id }, timeoutMs: this.opts.timeoutMs ?? 240_000,
       providers: this.opts.providers ?? ["groq", "deepseek"],
     });
     if (this.disposed) return;

@@ -14,6 +14,7 @@ import { predictView } from "./predict.js";
 import { resetRules, ruleView } from "./rules.js";
 import { Consolidator } from "./sleep.js";
 import { Dreamer } from "./dreams.js";
+import { UsageLedger, type UsageData } from "./usage.js";
 import { readFileSync } from "node:fs";
 import { Simulation, type SimSnapshot } from "./sim.js";
 import { TEACHER_VOICE, hueOf, type PetDef } from "./pet.js";
@@ -49,6 +50,10 @@ const defaultRoster: PetDef[] = JSON.parse(readFileSync(path.join(__dirname, "..
 // The language-model gateway outlives any single session. Spend is kept outside the run folder, so loading an
 // old save can never rewind the DeepSeek ceiling.
 const llm = gatewayFromEnv();
+llm.onCall = (rec) => {
+  ledger.add(rec, clock ? clock.parts.day : 1);
+  if (store) void store.append("llm-calls", { ...rec, ...(clock ? { day: clock.parts.day, hour: clock.parts.hour, minute: clock.parts.minute } : {}) }).catch(() => {});
+};
 llm.restore((await globalStore.readJson<ProviderStats[]>("llm-spend.json")) ?? (await store.readJson<ProviderStats[]>("llm.json")));
 console.log(`LLM providers: ${llm.snapshot().map((p) => `${p.name}(${p.model}${p.budgetUsd !== undefined ? `, ceiling $${p.budgetUsd}` : ""})`).join(", ") || "none"}`);
 
@@ -90,6 +95,7 @@ function broadcast(payload: unknown) {
 // ---- the live session: clock, world, pets, teacher. Replaced as a whole when a save is loaded. ----
 let clock!: SimClock;
 let world!: World;
+let ledger = new UsageLedger(); // what the models were asked and what it cost (see usage.ts); replaced when a run is loaded
 let sim!: Simulation;
 let system2!: System2;
 let conversation!: Conversation;
@@ -139,6 +145,7 @@ const envControl: EnvControl = {
 
 /** Build the live session from the files in the run folder (or from scratch when there are none). */
 async function loadSession() {
+  ledger = UsageLedger.from(await store.readJson<UsageData>("llm-usage.json"));
   const savedClock = await store.readJson<{ simMs: number; speed: number; paused?: boolean }>("clock.json");
   const savedWorld = await store.readJson<WorldSnapshot>("world.json");
   const savedSim = await store.readJson<SimSnapshot>("pets.json");
@@ -294,6 +301,10 @@ app.get("/api/llm/test/:provider", async (req, res) => {
   }
   lastPing.set(name, Date.now());
   res.json(await llm.ping(name));
+});
+app.get("/api/usage", (_req, res) => {
+  const ds = llm.snapshot().find((p) => p.name === "deepseek");
+  res.json({ ...ledger.view(Date.now(), ds && ds.budgetUsd !== undefined ? { budgetUsd: ds.budgetUsd, spentUsd: ds.spendUsd } : undefined), budget: ds ? { provider: "deepseek", budgetUsd: ds.budgetUsd ?? null, spentUsd: ds.spendUsd, teacherSpentUsd: ds.teacherSpendUsd } : null, speed: clock.speed, paused: clock.paused });
 });
 app.get("/api/llm", (_req, res) => {
   const now = Date.now();
@@ -697,6 +708,7 @@ setInterval(() => {
 }, 250);
 
 async function save() {
+  await store.writeJson("llm-usage.json", ledger.data);
   await store.writeJson("clock.json", { simMs: clock.simTimeMs, speed: clock.speed, paused: clock.paused });
   await store.writeJson("world.json", world.snap);
   await store.writeJson("pets.json", sim.snapshot());

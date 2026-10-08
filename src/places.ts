@@ -58,7 +58,14 @@ export interface PlaceMap {
 }
 
 export const newPlaces = (): PlaceMap => ({ nodes: {}, edges: [], last: null, lastSec: 0, travel: 0, trail: [], route: null, avoid: {}, seq: 0 });
-const ensure = (p: PetState): PlaceMap => (p.places ??= newPlaces());
+/** Fill in anything a map saved by an older version lacks (the breadcrumbs and a run's turns came later), so an old save keeps running. */
+export function repairPlaces(pm: PlaceMap): PlaceMap {
+  pm.nodes ??= {}; pm.edges ??= []; pm.avoid ??= {}; pm.trail ??= []; pm.travel ??= 0; pm.seq ??= 0; pm.last ??= null; pm.lastSec ??= 0; pm.route ??= null;
+  for (const e of pm.edges) e.via ??= [];
+  if (pm.route && (!Array.isArray(pm.route.wps) || !Array.isArray(pm.route.path))) pm.route = null; // a route planned by an older version: plan again
+  return pm;
+}
+const ensure = (p: PetState): PlaceMap => (p.places = repairPlaces(p.places ?? newPlaces()));
 
 const dist = (a: { x: number; y: number }, b: { x: number; y: number }) => Math.hypot(a.x - b.x, a.y - b.y);
 export const keyHz = (key: string) => Math.round(100 * 2 ** (Number(key.split(":")[1]) / 12));

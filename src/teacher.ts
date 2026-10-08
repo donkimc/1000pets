@@ -453,7 +453,7 @@ export class Teacher implements TeacherHook {
 
   // ----- model calls -----
 
-  private async callModel(messages: ChatMessage[], opts: { maxTokens: number; temperature: number; json?: boolean }): Promise<LlmResult> {
+  private async callModel(messages: ChatMessage[], opts: { maxTokens: number; temperature: number; json?: boolean; tag: { kind: string; pet?: string } }): Promise<LlmResult> {
     if (this.callsLastHour >= this.cfg.maxCallsPerHour) throw new GuardError(`call guard: ${this.cfg.maxCallsPerHour} teacher calls an hour reached`);
     this.calls.push(this.now());
     const r = await this.llm.complete(messages, { ...opts, account: "teacher", providers: this.cfg.providers, timeoutMs: 150_000 });
@@ -524,7 +524,7 @@ export class Teacher implements TeacherHook {
         { role: "system", content: `${ROLE}\n${ENV_DOC}\n${instruction}\n${PLAN_SCHEMA}` },
         { role: "user", content: ctx },
       ],
-      { maxTokens: 3500, temperature: 0.7, json: true },
+      { maxTokens: 3500, temperature: 0.7, json: true, tag: { kind: mode === "initial" ? "teacher-plan" : "teacher-review" } },
     );
     if (this.disposed) return;
     const nowMin = this.nowMin();
@@ -626,7 +626,7 @@ export class Teacher implements TeacherHook {
     ];
     let r: LlmResult;
     try {
-      r = await this.callModel(messages, { maxTokens: 400, temperature: 0.8 });
+      r = await this.callModel(messages, { maxTokens: 400, temperature: 0.8, tag: { kind: "teacher-lesson" } });
     } catch (e) {
       a.attempts++;
       if (a.attempts >= 3 && !(e instanceof GuardError)) this.finish(item, "missed", "could not reach a model");
@@ -685,7 +685,7 @@ export class Teacher implements TeacherHook {
               `Your long-term goals: ${goals}\n${roomFacts(this.sim.world.layout)}\nWhat you know about ${pet.name}:\n${buildNotes(pet, Math.floor(this.nowMin() / DAY) + 1, tod, 0)}`,
           },
         ],
-        { maxTokens: 500, temperature: 0.7, json: true },
+        { maxTokens: 500, temperature: 0.7, json: true, tag: { kind: "teacher-answer", pet: pet.id } },
       );
     } catch (err) {
       a.attempts++;

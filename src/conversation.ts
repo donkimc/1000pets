@@ -123,7 +123,7 @@ export class Conversation implements SpeechHook {
   private async express(p: PetState, meaning: string): Promise<string | null> {
     const system = `You are the voice of ${p.name}, a small pet. Say ONE short sentence (at most 20 words) in plain English that expresses the meaning you are given, the way a small curious companion would. No narration, no quotation marks, no emojis, and do not add facts that are not in the meaning.`;
     try {
-      const r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: `Meaning to express: ${meaning}` }], { maxTokens: 400, temperature: 0.8, patienceMs: 45_000 });
+      const r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: `Meaning to express: ${meaning}` }], { maxTokens: 400, temperature: 0.8, patienceMs: 45_000, tag: { kind: "speech", pet: p.id } });
       return looksLikeJson(r.text) ? null : cleanSpeech(r.text) || null; // never speak JSON aloud
     } catch (e) {
       if (!(e instanceof LlmUnavailable)) console.error("express error", e);
@@ -210,7 +210,7 @@ export class Conversation implements SpeechHook {
     const user = `${buildNotes(p, day, tod, this.nearbyCount(p))}\n\nYou heard ${describeSource(p, speaker)} say: "${text}"\n${directed}`;
     let r: LlmResult;
     try {
-      r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: user }], { maxTokens: 900, temperature: 0.7, patienceMs: 20_000 }); // someone is waiting for this answer: do not queue for long
+      r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: user }], { maxTokens: 900, temperature: 0.7, patienceMs: 20_000, tag: { kind: "reply", pet: p.id } }); // someone is waiting for this answer: do not queue for long
     } catch (e) {
       if (!(e instanceof LlmUnavailable)) console.error("respond error", e);
       return;

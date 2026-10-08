@@ -249,7 +249,7 @@ export class System2 {
     markGistsUsed(p, this.sim.simSec);
     const patienceMs = (this.opts.patienceSec ?? 240) * 1000;
     const ask = (pr: { system: string; user: string }, o: Record<string, unknown>) =>
-      this.llm.complete([{ role: "system", content: pr.system }, { role: "user", content: pr.user }], { maxTokens: 900, ...o });
+      this.llm.complete([{ role: "system", content: pr.system }, { role: "user", content: pr.user }], { maxTokens: 900, tag: { kind: deep ? "deep" : "thought", pet: p.id }, ...o });
     let result;
     try {
       try {

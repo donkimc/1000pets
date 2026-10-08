@@ -484,7 +484,7 @@ export class Consolidator {
     const now = this.sim.simSec;
     const { system, user, ids } = buildGistPrompt(p, now);
     const r = await this.llm.complete([{ role: "system", content: system }, { role: "user", content: user }], {
-      maxTokens: 700, temperature: 0.6, json: true, timeoutMs: this.opts.timeoutMs ?? 240_000, providers: this.opts.providers ?? ["groq", "deepseek"], // the small local models cannot write these (measured), so cloud only; DeepSeek counts toward the pets' ceiling
+      maxTokens: 700, temperature: 0.6, json: true, tag: { kind: "gist", pet: p.id }, timeoutMs: this.opts.timeoutMs ?? 240_000, providers: this.opts.providers ?? ["groq", "deepseek"], // the small local models cannot write these (measured), so cloud only; DeepSeek counts toward the pets' ceiling
     });
     if (this.disposed) return;
     const gists = parseGists(r.text, ids, p.mind.gists, this.sim.simSec);
