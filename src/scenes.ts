@@ -123,6 +123,13 @@ export function describeScene(scene: Scene, p: Pick<PetState, "odo" | "heading">
   return `${clockLabel} ${scene.why}${times} (battery ${scene.battery}%, light ${scene.light}, ${scene.action}). I noticed ${saw}. ${placeWords(scene, { odo: p.odo, heading: p.heading })}.`;
 }
 
+/** A memory in one short line (for the compact prompt): when, what made it memorable, how often, and the main thing seen or heard. */
+export function describeSceneShort(scene: Scene, clockLabel: string): string {
+  const first = scene.seen[0] ? `a ${thingWords(scene.seen[0])} ${DIR(scene.seen[0].bearing)}` : "";
+  const bits = [first, scene.tone ? `the steady tone at ${scene.tone.pitch} Hz` : ""].filter(Boolean);
+  return `${clockLabel} ${scene.why}${(scene.count ?? 1) > 1 ? ` (${scene.count} times)` : ""} (battery ${scene.battery}%)${bits.length ? `; noticed ${bits.join(", ")}` : ""}.`;
+}
+
 // ---- which scenes to show, and which to forget ----
 
 /** Importance, softened by age and boosted a little by use. Used to rank scenes for forgetting and for the prompt. */

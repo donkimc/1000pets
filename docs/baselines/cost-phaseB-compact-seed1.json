@@ -1,0 +1,124 @@
+{
+  "days": 2,
+  "speed": 1,
+  "seed": 1,
+  "layout": "house",
+  "intervalSec": 70,
+  "promptMode": "compact",
+  "tokensPerDay": 4321368,
+  "costPerDay": 1.0068318999999988,
+  "costPerDayNoCache": 1.3302943000000016,
+  "cachedShare": 0.3921374277158825,
+  "byKind": [
+    {
+      "kind": "thought",
+      "calls": 4783,
+      "fails": 0,
+      "tokensIn": 4818023,
+      "tokensOut": 288957,
+      "cachedIn": 2226304,
+      "costUsd": 1.1734581100000014,
+      "ms": 0,
+      "share": 0.5908985302802261
+    },
+    {
+      "kind": "deep",
+      "calls": 1593,
+      "fails": 0,
+      "tokensIn": 3018102,
+      "tokensOut": 96007,
+      "cachedIn": 915840,
+      "costUsd": 0.7373272400000002,
+      "ms": 0,
+      "share": 0.3603151825995842
+    },
+    {
+      "kind": "teacher-answer",
+      "calls": 134,
+      "fails": 0,
+      "tokensIn": 279729,
+      "tokensOut": 3082,
+      "cachedIn": 67072,
+      "costUsd": 0.06550263000000003,
+      "ms": 0,
+      "share": 0.03272239253865905
+    },
+    {
+      "kind": "teacher-lesson",
+      "calls": 48,
+      "fails": 0,
+      "tokensIn": 67032,
+      "tokensOut": 1200,
+      "cachedIn": 9984,
+      "costUsd": 0.01742184,
+      "ms": 0,
+      "share": 0.007894722226850386
+    },
+    {
+      "kind": "teacher-review",
+      "calls": 15,
+      "fails": 0,
+      "tokensIn": 28143,
+      "tokensOut": 3960,
+      "cachedIn": 9856,
+      "costUsd": 0.009983410000000002,
+      "ms": 0,
+      "share": 0.0037144487578933336
+    },
+    {
+      "kind": "gist",
+      "calls": 18,
+      "fails": 0,
+      "tokensIn": 18400,
+      "tokensOut": 54,
+      "cachedIn": 1920,
+      "costUsd": 0.004643400000000001,
+      "ms": 0,
+      "share": 0.0021352034818603737
+    },
+    {
+      "kind": "reply",
+      "calls": 9,
+      "fails": 0,
+      "tokensIn": 13037,
+      "tokensOut": 198,
+      "cachedIn": 768,
+      "costUsd": 0.00358419,
+      "ms": 0,
+      "share": 0.0015313437781739486
+    },
+    {
+      "kind": "dream",
+      "calls": 18,
+      "fails": 0,
+      "tokensIn": 4915,
+      "tokensOut": 306,
+      "cachedIn": 2880,
+      "costUsd": 0.0010876500000000001,
+      "ms": 0,
+      "share": 0.0006040911118886426
+    },
+    {
+      "kind": "teacher-plan",
+      "calls": 1,
+      "fails": 0,
+      "tokensIn": 1230,
+      "tokensOut": 264,
+      "cachedIn": 0,
+      "costUsd": 0.0006225,
+      "ms": 0,
+      "share": 0.00017286192705643212
+    },
+    {
+      "kind": "speech",
+      "calls": 1,
+      "fails": 0,
+      "tokensIn": 89,
+      "tokensOut": 8,
+      "cachedIn": 0,
+      "costUsd": 0.000032829999999999996,
+      "ms": 0,
+      "share": 0.00001122329780754613
+    }
+  ]
+}

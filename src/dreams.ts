@@ -157,9 +157,10 @@ export function addDream(p: Pick<PetState, "mind">, d: Dream): void {
 // ---- how a dream is remembered ----
 
 /** The line System 2 reads while a dream is still on the pet's mind. It says plainly that none of it happened. */
-export function dreamLine(p: Pick<PetState, "mind">, nowSec: number): string | null {
+export function dreamLine(p: Pick<PetState, "mind">, nowSec: number, short = false): string | null {
   const d = p.mind.dreams[p.mind.dreams.length - 1];
   if (!d || nowSec - d.tSec > SHOWN_FOR_SEC) return null;
+  if (short) return `A DREAM you had (NOT real, not a memory, never a belief): "${d.narrative}" Its worry, only a possibility to look out for: ${d.worry}.`;
   return `A DREAM you had (it is NOT something that happened, so do not treat any of it as a fact or a memory): "${d.narrative}" It left you wondering whether ${d.worry}. That is only a possibility you could look out for.`;
 }
 

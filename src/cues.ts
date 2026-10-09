@@ -150,7 +150,7 @@ export function describeTone(tone: Tone, prevVolume: number | undefined): string
 }
 
 /** What the pet has learned about each tone, as plain counts. */
-export function describeCues(p: Pick<PetState, "mind">): string[] {
+export function describeCues(p: Pick<PetState, "mind">, short = false): string[] {
   return Object.values(p.mind.cues ?? {})
     .sort((a, b) => b.support - a.support || b.exposureSec - a.exposureSec)
     .slice(0, 2)
@@ -158,6 +158,7 @@ export function describeCues(p: Pick<PetState, "mind">): string[] {
       const t = cueTrust(c);
       const mins = Math.max(1, Math.round(c.exposureSec / 60));
       const verdict = t.trusted ? "I trust it" : t.tentative ? "I suspect it" : c.contra > c.support ? "I doubt it" : "I do not know what it means yet";
+      if (short) return `- tone ${c.pitch} Hz: heard ${mins} min; charging followed ${c.support}x, not charged ${c.contra}x; ${verdict}.`;
       return `- the steady tone at ${c.pitch} Hz: heard for about ${mins} min in total. Times I got close to its loud end and charging began: ${c.support}. Times I followed it to the source and was not charged: ${c.contra}. ${verdict}.`;
     });
 }

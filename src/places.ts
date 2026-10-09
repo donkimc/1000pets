@@ -224,7 +224,7 @@ export function placeSteer(p: PetState, nowSec: number): PlaceSteer | null {
 const DIR = (b: number) => (Math.abs(b) < 0.5 ? "ahead of me" : Math.abs(b) > 2.6 ? "behind me" : b > 0 ? "to my right" : "to my left");
 
 /** Lines for the pet's notes: the pads it knows how to find. */
-export function describePlaces(p: PetState, nowSec: number, n = 3): string[] {
+export function describePlaces(p: PetState, nowSec: number, n = 3, short = false): string[] {
   const pm = p.places;
   if (!pm) return [];
   const pads = Object.values(pm.nodes).filter((x) => x.kind === "pad").sort((a, b) => b.charged - a.charged || b.visits - a.visits).slice(0, n);
@@ -232,9 +232,12 @@ export function describePlaces(p: PetState, nowSec: number, n = 3): string[] {
   const lines = pads.map((x) => {
     const ago = nowSec - x.lastSec, when = ago < 3600 ? `${Math.max(1, Math.round(ago / 60))} min ago` : `${(ago / 3600).toFixed(1)} h ago`;
     const d = dist(p.odo, x), way = Math.atan2(x.y - p.odo.y, x.x - p.odo.x) - p.heading;
+    // (coarse on purpose: a figure that changes every minute would change the start of the prompt every time, and a repeated start is what a provider's cache discounts)
+    const lately = ago < 3600 ? "within the hour" : `${Math.round(ago / 3600)} h ago`;
+    if (short) return `- pad${x.key ? ` ${keyHz(x.key)} Hz` : ""}: charged there ${x.charged}x, last ${lately}, about ${Math.round(d / 10) * 10} steps ${DIR(normAngle(way))}${(pm.avoid[x.id] ?? 0) > nowSec ? " (did not work last time)" : ""}`;
     return `- a pad${x.key ? ` that hums at ${keyHz(x.key)} Hz` : ""}: I have charged there ${x.charged} time${x.charged === 1 ? "" : "s"}, last there ${when}; about ${Math.round(d / 10) * 10} steps from here, ${DIR(normAngle(way))}${(pm.avoid[x.id] ?? 0) > nowSec ? " (it did not work last time I tried)" : ""}`;
   });
-  if (doors) lines.push(`- I know ${doors} doorway${doors === 1 ? "" : "s"} I have been through`);
+  if (doors) lines.push(short ? `- ${doors} doorway${doors === 1 ? "" : "s"} known` : `- I know ${doors} doorway${doors === 1 ? "" : "s"} I have been through`);
   return lines;
 }
 

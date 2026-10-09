@@ -5,7 +5,7 @@ import { LlmGateway, LlmUnavailable } from "./llm.js";
 import { SUGGESTIONS, type Belief, type PetState, type Suggestion } from "./pet.js";
 import type { Simulation } from "./sim.js";
 import type { Store } from "./store.js";
-import { describeScene, markUsed, selectScenes } from "./scenes.js";
+import { describeScene, describeSceneShort, markUsed, selectScenes } from "./scenes.js";
 import { describeCues } from "./cues.js";
 import { describeExpectations, describeSurprises } from "./predict.js";
 import { describeGists, markGistsUsed } from "./sleep.js";
@@ -93,7 +93,70 @@ export function buildNotes(p: PetState, day: number, timeOfDay: number, nearby =
   ].join("\n");
 }
 
-export function buildPrompt(p: PetState, day: number, timeOfDay: number, nearby = 0, nowSec?: number, deep = false, habits = false): { system: string; user: string } {
+// ---- the compact prompt: the same facts with less to read ----
+//
+// Routine thoughts used to send everything the pet knows, about 1,750 tokens each, and they are most of what is spent.
+// The compact prompt sends the same kinds of fact but fewer of each, and in a different order: what changes slowly (who it
+// is, who it knows, what it believes) comes first and what changes by the minute (the clock, its body, what it senses) last,
+// so that the start of the prompt is the same from one thought to the next and a provider that caches repeated prompt starts
+// (DeepSeek does) charges much less for it. The system text no longer names the pet, so it is identical for every pet.
+// A deep thought (the rare careful review) still gets the full prompt. S2_PROMPT=full brings the old prompt back exactly.
+export type PromptMode = "compact" | "full";
+export const promptSettings: { mode: PromptMode } = { mode: process.env.S2_PROMPT === "full" ? "full" : "compact" };
+
+function systemCompact(habits: boolean): string {
+  return `You are the slow inner voice (System 2) of a small pet in a house with other pets, a human and a wise Teacher (it explains things, answers questions, can change a room). You are not an assistant. Use only the notes below; never invent places, objects or events.\n` +
+    `Pick ONE useful question about your situation, reflect briefly, and reply with ONLY a JSON object:\n` +
+    `{"question": string (max 100), "thought": string (1-2 sentences, first person), "beliefs": [{"text": string (max 80), "confidence": number 0-1}] (0-3, only if the notes support them), ` +
+    `"intention": string or null (a goal for hours or days, max 80; null keeps the current one), "drop_intention": boolean, "suggestion": one of ${SUGGESTIONS.map((x) => `"${x}"`).join(", ")}, ` +
+    `"say": null or {"to": "nearest" or "all", "meaning": string (max 100, plain ideas)}, "ask_teacher": null or string (max 120; rarely), ` +
+    `"retract": [string] (your beliefs, as written, that you now think are wrong; usually empty)` +
+    (habits ? `, "tune": null or {"habit": one of ${KNOB_NAMES.map((k) => `"${k}"`).join(", ")}, "direction": "up" or "down", "why": string (max 100 chars)} (almost always null; a small change to one habit, tried for a day and kept only if it truly helps)` : ``) + `}\n` +
+    `Write belief text as plain words only: never copy numbers or "how sure" values into it. Ask something new, not a recent question. "say" only if someone is within earshot and it is worth saying. ` +
+    `Never state as fact something you only heard from others. A dream is not a memory: nothing in a dream happened, so never put anything from a dream in "beliefs"; turn its worry into a question or an intention to look into. ` +
+    `If your own experience contradicts something you believed or were told, let it go and do not take it up again.`;
+}
+
+/** The pet's notes for a routine thought: the same kinds of fact, fewer of each, slow-changing first, fast-changing last. */
+export function buildNotesCompact(p: PetState, day: number, timeOfDay: number, nearby = 0, nowSec = (day - 1) * 86400 + timeOfDay * 60, withHabits = false): string {
+  const t = p.traits, m = p.mind;
+  const hh = String(Math.floor(timeOfDay / 60)).padStart(2, "0"), mm = String(timeOfDay % 60).padStart(2, "0");
+  const clockOf = (tSec: number) => { const x = Math.floor(tSec / 60); return `D${Math.floor(x / 1440) + 1} ${String(Math.floor((x % 1440) / 60)).padStart(2, "0")}:${String(x % 60).padStart(2, "0")}`; };
+  const list = (title: string, lines: string[], empty?: string) => (lines.length ? `${title}\n${lines.join("\n")}` : empty ? `${title} ${empty}` : null);
+  const others = describeOthers(p, nowSec, 2, true), pads = describePlaces(p, nowSec, 2, true), cues = describeCues(p, true).slice(0, 1), gists = describeGists(p, 2);
+  const claims = m.claims.slice(-3).map((c) => `- ${c.text}${sourceNote(m, c)} [${c.status}${c.why && c.status !== "unverified" ? `: ${c.why}` : ""}]`);
+  const wrong = (m.refuted ?? []).filter((r) => nowSec - r.tSec < 3 * 86400).slice(-2).map((r) => `- ${r.text} (${r.why})`);
+  const beliefs = m.beliefs.map((b) => `- ${b.text} [how sure: ${b.confidence.toFixed(2)}${b.verdict === "contradicted" ? `; my own experience disagrees: ${b.why}` : b.verdict === "supported" ? "; borne out by my experience" : ""}]`);
+  const moments = selectScenes(p, nowSec, 2).map((sc) => `- ${describeSceneShort(sc, clockOf(sc.tSec))}`);
+  const surprises = describeSurprises(p, nowSec).slice(0, 2);
+  const dream = dreamLine(p, nowSec, true);
+  const recentQs = (m.recentQuestions ?? []).slice(-3);
+  return [
+    // slow-changing: the same from one thought to the next
+    `You are ${p.name}. Personality: ${WORD(t.curiosity, "not very curious", "somewhat curious", "very curious")}, ${WORD(t.social, "reserved", "moderately social", "very social")}, ${WORD(t.caution, "bold", "fairly careful", "very cautious")}, ${WORD(t.patience, "impatient", "fairly patient", "very patient")}.`,
+    list("The others I know (I tell them apart by how they look, I do not know their names):", others),
+    list("Pads where my battery filled up, and how I could get back to them:", pads),
+    list("What I have worked out about steady tones:", cues),
+    list("What I have come to think from looking back over my memories (provisional, from sleep):", gists),
+    list("Current beliefs:", beliefs, "(none yet)"),
+    list("Things others told me (claims, NOT verified facts):", claims),
+    list("Things I believed or was told that my own experience showed to be WRONG (do not take them up again):", wrong),
+    ...(withHabits ? [`My habits (small things about how I live that I am allowed to try changing a little):\n${describeHabits(p, nowSec)}`] : []),
+    // fast-changing: the clock, the body, what it senses now
+    `Now: day ${day}, ${hh}:${mm}. Battery ${Math.round(p.energy)}%, currently ${p.mode}, doing "${p.s1.action}"${p.s1.lastReason ? ` because: ${p.s1.lastReason}` : ""}. Needs (0-1): curiosity ${p.drives.curiosity.toFixed(2)}, social ${p.drives.social.toFixed(2)}, rest ${p.drives.rest.toFixed(2)}.`,
+    `Senses: light ${m.sensed.light}/100, temperature ${m.sensed.temperature}C${m.sensed.touch ? `, touching: ${m.sensed.touch}` : ""}${m.sensed.heard ? `, hearing ${m.sensed.heard}` : ""}. Sees: ${m.sensed.seen.length ? m.sensed.seen.slice(0, 2).join("; ") : "nothing in view"}. Within reach: ${m.sensed.near?.length ? m.sensed.near.slice(0, 2).join("; ") : "nothing"}. Within earshot: ${nearby ? `${nearby} other creature${nearby > 1 ? "s" : ""}` : "nobody"}.${m.sensed.tone ? ` Hearing a steady tone: ${m.sensed.tone}.` : ""}`,
+    ...(surprises.length ? [`What has surprised me lately (something I expected did not happen):\n${surprises.join("\n")}`] : []),
+    ...(dream ? [dream] : []),
+    list("Memorable moments:", moments),
+    list("Recent experience:", m.episodes.filter((e) => !/nothing pressing, wandering|^D\d+ \d\d:\d\d (night and tired|very tired|resting)/.test(e)).slice(-4).map((e) => "- " + e)), // (routine idling is left out)
+    ...(recentQs.length ? [`Questions you asked yourself lately (ask something NEW this time, not one of these): ${recentQs.map((q) => `"${q}"`).join(" | ")}`] : []),
+    ...((m.repeatStreak ?? 0) >= 2 ? [`You have asked the same thing several times in a row. Think about something completely different now: your body, the room, the others, or something you could try.`] : []),
+    `Current intention: ${m.intention ? m.intention.goal : "(none)"}`,
+  ].filter((x): x is string => !!x).join("\n");
+}
+
+export function buildPrompt(p: PetState, day: number, timeOfDay: number, nearby = 0, nowSec?: number, deep = false, habits = false, mode: PromptMode = promptSettings.mode): { system: string; user: string } {
+  if (mode === "compact" && !deep) return { system: systemCompact(habits), user: buildNotesCompact(p, day, timeOfDay, nearby, nowSec, habits) };
   const system =
     `You are the slow, deliberate inner voice (System 2) of ${p.name}, a small pet living in a simple 2D room with two other pets and a human. A wise Teacher also lives in the room: it explains things, answers questions and can change the room (lamp, heater, curtain, door) when that is a good idea. ` +
     `You are not an assistant. You only know the notes you are given; never invent places, objects or events that are not in the notes. ` +
@@ -245,11 +308,12 @@ export class System2 {
     const nearby = this.conversation?.nearbyCount(p) ?? 0;
     let deep = wantsDeep;
     let prompt = buildPrompt(p, day, tod, nearby, this.sim.simSec, deep, this.sim.ruleLearning);
-    markUsed(p, this.sim.simSec); // these memories were shown, so they count as used
-    markGistsUsed(p, this.sim.simSec);
+    const shown = promptSettings.mode === "compact" && !deep ? 2 : undefined; // how many memories and gists the prompt shows
+    markUsed(p, this.sim.simSec, shown); // these memories were shown, so they count as used
+    markGistsUsed(p, this.sim.simSec, shown);
     const patienceMs = (this.opts.patienceSec ?? 240) * 1000;
     const ask = (pr: { system: string; user: string }, o: Record<string, unknown>) =>
-      this.llm.complete([{ role: "system", content: pr.system }, { role: "user", content: pr.user }], { maxTokens: 900, tag: { kind: deep ? "deep" : "thought", pet: p.id }, ...o });
+      this.llm.complete([{ role: "system", content: pr.system }, { role: "user", content: pr.user }], { maxTokens: deep || promptSettings.mode === "full" ? 900 : 450, tag: { kind: deep ? "deep" : "thought", pet: p.id }, ...o });
     let result;
     try {
       try {

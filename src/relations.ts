@@ -148,13 +148,18 @@ function company(r: Relation): string {
 }
 
 /** Short lines for the pet's notes: the ones it knows, best known first. */
-export function describeOthers(p: Pick<PetState, "mind">, now: number, n = 4): string[] {
+export function describeOthers(p: Pick<PetState, "mind">, now: number, n = 4, short = false): string[] {
   return Object.values(p.mind.others ?? {})
     .filter((r) => r.seenSec >= 30 || r.told > 0)
     .sort((a, b) => b.seenSec + b.told * 600 - (a.seenSec + a.told * 600))
     .slice(0, n)
     .map((r) => {
       const known = r.seenSec >= 3600 ? `${Math.round(r.seenSec / 3600)}h` : `${Math.max(1, Math.round(r.seenSec / 60))} min`;
+      if (short) { // the same facts, said briefly (for the compact prompt)
+        const a = affinityOf(r), co = r.seenSec < KNOWN_SEC ? "barely known" : a > 0.25 ? "good company" : a < -0.1 ? "poor company" : "company so-so";
+        const trust = r.told === 0 ? "no record of what they say" : `${trustOf(r) >= 0.65 ? "reliable" : trustOf(r) <= 0.35 ? "often wrong" : "mixed"} (${r.right}/${r.told} of what they said held up)`;
+        return `- ${r.label}: seen ${known}, ${co}${r.bumps ? `, ${r.bumps} bumps` : ""}, ${trust}${now - r.lastSec > 6 * 3600 ? ", not seen for a while" : ""}`;
+      }
       const bumps = r.bumps ? `, bumped into them ${r.bumps}x` : "";
       return `- ${r.label}: seen for ${known}; ${company(r)}${bumps}; ${trustWord(r)}${now - r.lastSec > 6 * 3600 ? "; not seen for a while" : ""}`;
     });

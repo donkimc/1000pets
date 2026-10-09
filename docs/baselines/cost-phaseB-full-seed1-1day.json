@@ -1,0 +1,113 @@
+{
+  "days": 1,
+  "speed": 1,
+  "seed": 1,
+  "layout": "house",
+  "intervalSec": 70,
+  "promptMode": "full",
+  "tokensPerDay": 6084390,
+  "costPerDay": 1.4611516999999996,
+  "costPerDayNoCache": 1.8059964999999996,
+  "cachedShare": 0.29284939068404736,
+  "byKind": [
+    {
+      "kind": "thought",
+      "calls": 2393,
+      "fails": 0,
+      "tokensIn": 4191401,
+      "tokensOut": 144289,
+      "cachedIn": 1223680,
+      "costUsd": 1.0456601699999981,
+      "ms": 0,
+      "share": 0.7125923880619093
+    },
+    {
+      "kind": "deep",
+      "calls": 796,
+      "fails": 0,
+      "tokensIn": 1497955,
+      "tokensOut": 47910,
+      "cachedIn": 456768,
+      "costUsd": 0.3657952500000001,
+      "ms": 0,
+      "share": 0.25407066279446255
+    },
+    {
+      "kind": "teacher-answer",
+      "calls": 67,
+      "fails": 0,
+      "tokensIn": 138810,
+      "tokensOut": 1541,
+      "cachedIn": 32768,
+      "costUsd": 0.032620200000000016,
+      "ms": 0,
+      "share": 0.023067390486145693
+    },
+    {
+      "kind": "teacher-lesson",
+      "calls": 24,
+      "fails": 0,
+      "tokensIn": 33347,
+      "tokensOut": 600,
+      "cachedIn": 4864,
+      "costUsd": 0.00869089,
+      "ms": 0,
+      "share": 0.0055793596399967785
+    },
+    {
+      "kind": "teacher-review",
+      "calls": 7,
+      "fails": 0,
+      "tokensIn": 12942,
+      "tokensOut": 1848,
+      "cachedIn": 4224,
+      "costUsd": 0.00468234,
+      "ms": 0,
+      "share": 0.0024308106482326085
+    },
+    {
+      "kind": "gist",
+      "calls": 9,
+      "fails": 0,
+      "tokensIn": 9534,
+      "tokensOut": 27,
+      "cachedIn": 768,
+      "costUsd": 0.00245028,
+      "ms": 0,
+      "share": 0.00157139828314753
+    },
+    {
+      "kind": "dream",
+      "calls": 9,
+      "fails": 0,
+      "tokensIn": 2442,
+      "tokensOut": 153,
+      "cachedIn": 1152,
+      "costUsd": 0.00059724,
+      "ms": 0,
+      "share": 0.0004265012597811777
+    },
+    {
+      "kind": "teacher-plan",
+      "calls": 1,
+      "fails": 0,
+      "tokensIn": 1230,
+      "tokensOut": 264,
+      "cachedIn": 0,
+      "costUsd": 0.0006225,
+      "ms": 0,
+      "share": 0.0002455463900243081
+    },
+    {
+      "kind": "speech",
+      "calls": 1,
+      "fails": 0,
+      "tokensIn": 89,
+      "tokensOut": 8,
+      "cachedIn": 0,
+      "costUsd": 0.000032829999999999996,
+      "ms": 0,
+      "share": 0.00001594243630010568
+    }
+  ]
+}

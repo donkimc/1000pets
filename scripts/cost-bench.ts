@@ -26,6 +26,7 @@ import type { PetDef } from "../src/pet.js";
 const arg = (name: string, d: string) => { const i = process.argv.indexOf("--" + name); return i >= 0 && process.argv[i + 1] ? process.argv[i + 1] : d; };
 const DAYS = Number(arg("days", "2")), SPEED = Number(arg("speed", "1")), SEED = Number(arg("seed", "1")), LAYOUT = arg("layout", "house");
 const PRICE_IN = 0.27, PRICE_OUT = 1.1; // USD per million tokens (DeepSeek, cache miss)
+const PRICE_HIT = 0.07; // ... and for input served from its prompt cache (the start of a prompt it has seen lately)
 const INTERVAL = Number(process.env.S2_INTERVAL_SEC ?? 70);
 
 const roster: PetDef[] = JSON.parse(readFileSync(new URL("../config/pets.json", import.meta.url), "utf8"));
@@ -34,6 +35,8 @@ const est = (s: string) => Math.ceil(s.length / 4);
 /** Stands in for the model: a valid reply for each kind of call, and the tokens a real one would have used. */
 class BenchLlm extends LlmGateway {
   private n = new Map<string, number>();
+  private lastPrompt = new Map<string, string>();
+  noCache = 0; // what everything would have cost with no prompt caching at all
   constructor(private ledger: UsageLedger, private day: () => number) {
     super([{ name: "bench", baseUrl: "", apiKey: "", model: "bench", priceInPerM: PRICE_IN, priceOutPerM: PRICE_OUT, rpm: 1e9 }]);
   }
@@ -74,10 +77,18 @@ class BenchLlm extends LlmGateway {
     const kind = opts.tag?.kind ?? "other";
     const text = this.reply(kind, opts.tag?.pet);
     const tokensIn = messages.reduce((n, m) => n + est(m.content) + 4, 0), tokensOut = est(text);
-    const costUsd = (tokensIn * PRICE_IN + tokensOut * PRICE_OUT) / 1e6;
-    const rec = { at: Date.now(), kind, ...(opts.tag?.pet ? { pet: opts.tag.pet } : {}), provider: "bench", model: "bench", ok: true, teacher: opts.account === "teacher", tokensIn, tokensOut, cachedIn: 0, costUsd, ms: 0 };
+    // The provider caches the start of a prompt it saw lately (in blocks of 64 tokens): how much of this one starts the same as the last of its kind?
+    const whole = messages.map((m) => m.content).join("\u0001"), key = kind + ":" + (opts.tag?.pet ?? "");
+    const before = this.lastPrompt.get(key) ?? "";
+    let same = 0; while (same < whole.length && same < before.length && whole[same] === before[same]) same++;
+    this.lastPrompt.set(key, whole);
+    const cachedIn = Math.min(tokensIn, Math.floor(est(whole.slice(0, same)) / 64) * 64);
+    const costNoCache = (tokensIn * PRICE_IN + tokensOut * PRICE_OUT) / 1e6;
+    const costUsd = ((tokensIn - cachedIn) * PRICE_IN + cachedIn * PRICE_HIT + tokensOut * PRICE_OUT) / 1e6;
+    this.noCache += costNoCache;
+    const rec = { at: Date.now(), kind, ...(opts.tag?.pet ? { pet: opts.tag.pet } : {}), provider: "bench", model: "bench", ok: true, teacher: opts.account === "teacher", tokensIn, tokensOut, cachedIn, costUsd, ms: 0 };
     this.ledger.add(rec, this.day());
-    return { text, provider: "bench", model: "bench", tokensIn, tokensOut, cachedIn: 0, costUsd, ms: 0 };
+    return { text, provider: "bench", model: "bench", tokensIn, tokensOut, cachedIn, costUsd, ms: 0 };
   }
 }
 
@@ -124,9 +135,10 @@ for (const k of v.byKind) {
 const tokPerDay = (v.total.tokensIn + v.total.tokensOut) / days;
 console.log("-".repeat(71));
 console.log("TOTAL".padEnd(16) + pad((v.total.calls / days).toFixed(0), 10) + pad("", 8) + pad("", 9) + pad(Math.round(tokPerDay).toLocaleString(), 12) + pad("100%", 7) + pad(usd(v.total.costUsd / days), 9));
+console.log(`\nWith the provider's prompt cache (a repeated prompt start is billed at ${usd(PRICE_HIT / 1000)} per thousand tokens instead of ${usd(PRICE_IN / 1000)}): ${usd(v.total.costUsd / days)} a day; without any caching: ${usd(llm.noCache / days)} a day. ${Math.round((v.total.cachedIn / Math.max(1, v.total.tokensIn)) * 100)}% of input tokens were a repeated start.`);
 console.log(`\nPer simulated day: ${Math.round(tokPerDay).toLocaleString()} tokens, ${usd(v.total.costUsd / days)} at DeepSeek list price (all calls paid, as on the hosted site, which has no local model).`);
 console.log(`Per pet per hour of simulated time: ${Math.round(tokPerDay / pets / 24).toLocaleString()} tokens.`);
 console.log(`At ${SPEED}x speed that is ${usd((v.total.costUsd / days) * SPEED / 24)} per real hour, ${usd(v.total.costUsd / days * SPEED)} per real day.`);
 const out = arg("json", "");
-if (out) writeFileSync(out, JSON.stringify({ days: DAYS, speed: SPEED, seed: SEED, layout: LAYOUT, intervalSec: INTERVAL, tokensPerDay: tokPerDay, costPerDay: v.total.costUsd / days, byKind: v.byKind }, null, 2));
+if (out) writeFileSync(out, JSON.stringify({ days: DAYS, speed: SPEED, seed: SEED, layout: LAYOUT, intervalSec: INTERVAL, promptMode: process.env.S2_PROMPT ?? "compact", tokensPerDay: tokPerDay, costPerDay: v.total.costUsd / days, costPerDayNoCache: llm.noCache / days, cachedShare: v.total.cachedIn / Math.max(1, v.total.tokensIn), byKind: v.byKind }, null, 2));
 process.exit(0);
