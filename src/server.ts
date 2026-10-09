@@ -164,14 +164,15 @@ async function loadSession() {
   world = new World(SEED, savedWorld ?? undefined, layout);
   sim = new Simulation(world, SEED, defaultRoster, savedSim ?? undefined);
   if (savedSim?.ruleLearning === undefined) sim.ruleLearning = process.env.RULE_LEARNING === "on"; // off unless switched on; a save remembers its own setting
-  system2 = new System2(sim, llm, store, { intervalSec: Number(process.env.S2_INTERVAL_SEC ?? 70), patienceSec: Number(process.env.S2_PATIENCE_SEC ?? 240), deepEvery: Number(process.env.S2_DEEP_EVERY ?? 4), isPaused: () => clock.paused });
+  system2 = new System2(sim, llm, store, { intervalSec: Number(process.env.S2_INTERVAL_SEC ?? 70), patienceSec: Number(process.env.S2_PATIENCE_SEC ?? 240), deepEvery: Number(process.env.S2_DEEP_EVERY ?? 8), isPaused: () => clock.paused });
   conversation = new Conversation(sim, llm, store, broadcast);
   system2.conversation = conversation;
   teacher = new Teacher(sim, llm, store, envControl, conversation, {
     isPaused: () => clock.paused,
     reviewEveryMin: Number(process.env.TEACHER_REVIEW_SIM_MIN ?? 180),
     reviewMinRealSec: Number(process.env.TEACHER_REVIEW_MIN_REAL_SEC ?? 600),
-    maxCallsPerHour: Number(process.env.TEACHER_MAX_CALLS_PER_HOUR ?? 30),
+    maxCallsPerHour: Number(process.env.TEACHER_MAX_CALLS_PER_HOUR ?? 12),
+    questionGapMin: Number(process.env.TEACHER_QUESTION_GAP_MIN ?? 180),
   }, savedTeacher, SEED);
   system2.teacher = teacher;
   consolidator = new Consolidator(sim, llm, store, { isPaused: () => clock.paused });

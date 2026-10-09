@@ -11,6 +11,8 @@ import { HUMAN_HUE, TEACHER_HUE } from "./sensors.js";
 import { hueOf } from "./pet.js";
 import { buildNotes, type ParsedThought, type SpeechHook } from "./system2.js";
 
+export const chatSettings = { maxRepliers: Math.max(1, Number(process.env.CHAT_MAX_REPLIERS ?? 2)) };
+
 export interface LlmLike {
   enabled: boolean;
   complete(messages: ChatMessage[], opts?: CompleteOpts): Promise<LlmResult>;
@@ -175,6 +177,8 @@ export class Conversation implements SpeechHook {
       const addressed = targetPet ? h === targetPet : to.kind === "all";
       if (addressed && (outsider || this.petChain <= GATE.maxPetChain)) repliers.push(h);
     }
+    // A message to everyone is answered by the nearest few, not by every pet in earshot (each answer is a model call).
+    if (to.kind === "all") repliers.splice(chatSettings.maxRepliers);
     repliers.forEach((h, i) => setTimeout(() => !this.disposed && void this.respond(h, speaker, text, to, u.id).catch((e) => console.error("respond error", e)), 800 + i * 1500));
     return u;
   }

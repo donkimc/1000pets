@@ -73,7 +73,7 @@
       tile("Server uptime", fmtDur(d.uptimeSec), `${d.memMB} MB memory`),
       tile("Average battery", avg + "%", d.pets.map((p) => `${p.name} ${p.energy}%`).join(" · ")),
       tile("Fast thoughts (S1)", s1.toLocaleString(), "behaviour changes"),
-      tile("Slow thoughts (S2)", s2.toLocaleString(), "model calls for thinking"),
+      tile("Slow thoughts (S2)", s2.toLocaleString(), `model calls for thinking${d.pets.some((p) => p.stats.s2Skipped) ? ` · ${d.pets.reduce((a, p) => a + (p.stats.s2Skipped || 0), 0).toLocaleString()} skipped (nothing new)` : ""}`),
       tile("Spoken aloud", d.comms.total.toLocaleString(), `${d.comms.fromHuman} from you`),
       tile("Model calls", calls.toLocaleString(), llm.providers.map((p) => `${p.name} ${p.calls}`).join(" · ")),
       tile("DeepSeek spend", "$" + (llm.providers.find((p) => p.name === "deepseek")?.spendUsd ?? 0).toFixed(3), `total $${spend.toFixed(3)}`),

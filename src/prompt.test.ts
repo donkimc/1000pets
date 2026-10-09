@@ -79,10 +79,17 @@ test("slow-changing facts come first and the clock and senses last, and the syst
   assert.equal(buildPrompt(sim.pets[1], day(sim), tod(sim), 1, sim.simSec, false, false, "compact").system, a.system, "the same system text for Moss as for Pip");
 });
 
-test("a deep review and the full mode are untouched", () => {
+test("a deep review is the compact notes plus its last thoughts, or the old full prompt with S2_DEEP_PROMPT=full; the full mode is untouched", () => {
   const { sim, p } = busyPet();
   p.mind.recentThoughts = ["The tone means trouble."];
-  const deep = buildPrompt(p, day(sim), tod(sim), 1, sim.simSec, true, false, "compact");
+  const lean = buildPrompt(p, day(sim), tod(sim), 1, sim.simSec, true, false, "compact", "compact");
+  assert.match(lean.user, /^You are Pip\./);
+  assert.match(lean.user, /Your last few thoughts \(review them\):\n- The tone means trouble\./);
+  assert.match(lean.system, /This is a rare, careful review[\s\S]*"retract"/);
+  assert.match(lean.system, /nothing in a dream happened/, "all the rules are still there");
+  const size = (x: { system: string; user: string }) => x.system.length + x.user.length;
+  assert.ok(size(lean) < size(buildPrompt(p, day(sim), tod(sim), 1, sim.simSec, true, false, "compact", "full")) * 0.75, "and it is smaller than the old deep prompt");
+  const deep = buildPrompt(p, day(sim), tod(sim), 1, sim.simSec, true, false, "compact", "full");
   assert.match(deep.user, /^Time: day /, "a deep thought still gets the full notes");
   assert.match(deep.user, /Your last few thoughts \(review them\):\n- The tone means trouble\./);
   assert.match(deep.system, /rare, careful review/);
@@ -121,4 +128,79 @@ test("a routine thought asks for a shorter answer than a deep one, and only the 
   await s2.think(p); // the second is deep
   assert.equal(llm.calls[1].max, 900);
   assert.equal(llm.calls[1].tag, "deep");
+});
+
+import { gateSettings, situation } from "./system2.js";
+
+test("a pet's situation changes when something real changes, and not for routine idling", () => {
+  const { sim, p } = busyPet();
+  const base = situation(p, "living", 1);
+  assert.equal(situation(p, "living", 1), base);
+  assert.notEqual(situation(p, "kitchen", 1), base, "a new room");
+  assert.notEqual(situation(p, "living", 2), base, "someone came near");
+  const e = p.energy; p.energy = Math.max(0, e - 25);
+  assert.notEqual(situation(p, "living", 1), base, "the battery dropped a band");
+  p.energy = e;
+  p.mind.episodes.push("D1 10:00 nothing pressing, wandering (light 3, battery 44%)");
+  assert.equal(situation(p, "living", 1), base, "routine idling is not news");
+  p.mind.episodes.push("D1 10:01 bumped into another pet");
+  assert.notEqual(situation(p, "living", 1), base, "a real event is");
+  const after = situation(p, "living", 1);
+  p.mind.scenes.push(scene("z", sim.simSec + 10));
+  assert.notEqual(situation(p, "living", 1), after, "a new memory");
+  void sim;
+});
+
+class Counter extends LlmGateway {
+  byPet: Record<string, number> = {};
+  constructor() { super([{ name: "x", baseUrl: "", apiKey: "", model: "m", priceInPerM: 0, priceOutPerM: 0, rpm: 99 }]); }
+  override async complete(_m: ChatMessage[], o: CompleteOpts = {}): Promise<LlmResult> {
+    const k = o.tag?.pet ?? "?"; this.byPet[k] = (this.byPet[k] ?? 0) + 1;
+    return { text: JSON.stringify({ question: "q" + this.byPet[k], thought: "t", beliefs: [], intention: null, suggestion: "none", say: null, ask_teacher: null }), provider: "x", model: "m", tokensIn: 1, tokensOut: 1 };
+  }
+}
+const settle = () => new Promise((r) => setImmediate(r));
+
+test("a pet whose situation has not changed skips its thought and waits longer, then thinks again as soon as something changes", async () => {
+  const sim = new Simulation(new World(1, undefined, HOUSE), 1, roster);
+  const pip = sim.pets[0];
+  pip.x = 300; pip.y = 300; pip.mode = "idle"; pip.s1.action = "wander";
+  for (const q of sim.pets.slice(1)) { q.x = 1500; q.y = 1200; }
+  let t = 0;
+  const llm = new Counter();
+  const s2 = new System2(sim, llm, nostore, { intervalSec: 100, deepEvery: 0, isPaused: () => false, now: () => t, random: () => 0.5 }); // every wait is exactly 100 s (x the stretch)
+  const step = async (sec: number) => { t += sec * 1000; s2.tick(); await settle(); await settle(); };
+  const was = gateSettings.on; gateSettings.on = true;
+  await step(1); await step(12); // the first tick sets its first thought for 10 s later
+  assert.equal(llm.byPet.pip, 1);
+  const waits: number[] = [];
+  let last = t;
+  for (let i = 0; i < 200 && waits.length < 4; i++) {
+    const before = pip.stats.s2Skipped ?? 0;
+    await step(10);
+    if ((pip.stats.s2Skipped ?? 0) > before) { waits.push(Math.round((t - last) / 1000)); last = t; }
+  }
+  assert.equal(llm.byPet.pip, 1, "nothing new, so no further thought was made");
+  assert.ok((pip.stats.s2Skipped ?? 0) >= 3, `skipped ${pip.stats.s2Skipped}, waits ${waits.join(",")}`);
+  assert.ok(waits[1] > waits[0] && waits[waits.length - 1] <= 4 * 100 + 20, `each wait is longer than the last, up to 4 times as long: ${waits.join(", ")}`);
+  // something happens: it moves to another room
+  pip.x = 1500; pip.y = 300;
+  for (let i = 0; i < 50 && llm.byPet.pip === 1; i++) await step(10);
+  assert.equal(llm.byPet.pip, 2, "a new room is a reason to think");
+  gateSettings.on = was;
+});
+
+test("with the gate off it thinks on the clock as before", async () => {
+  const sim = new Simulation(new World(1, undefined, HOUSE), 1, roster);
+  const pip = sim.pets[0];
+  pip.x = 300; pip.y = 300; pip.mode = "idle";
+  for (const q of sim.pets.slice(1)) { q.x = 1500; q.y = 1200; }
+  let t = 0;
+  const llm = new Counter();
+  const s2 = new System2(sim, llm, nostore, { intervalSec: 100, deepEvery: 0, isPaused: () => false, now: () => t, random: () => 0.5 });
+  const was = gateSettings.on; gateSettings.on = false;
+  for (let i = 0; i < 40; i++) { t += 10_000; s2.tick(); await settle(); await settle(); }
+  gateSettings.on = was;
+  assert.ok(llm.byPet.pip >= 3, `thought ${llm.byPet.pip} times in 400 s with nothing changing`);
+  assert.equal(pip.stats.s2Skipped ?? 0, 0);
 });

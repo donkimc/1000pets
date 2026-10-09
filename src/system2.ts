@@ -102,7 +102,38 @@ export function buildNotes(p: PetState, day: number, timeOfDay: number, nearby =
 // (DeepSeek does) charges much less for it. The system text no longer names the pet, so it is identical for every pet.
 // A deep thought (the rare careful review) still gets the full prompt. S2_PROMPT=full brings the old prompt back exactly.
 export type PromptMode = "compact" | "full";
-export const promptSettings: { mode: PromptMode } = { mode: process.env.S2_PROMPT === "full" ? "full" : "compact" };
+export const promptSettings: { mode: PromptMode; deep: PromptMode } = {
+  mode: process.env.S2_PROMPT === "full" ? "full" : "compact",
+  deep: process.env.S2_DEEP_PROMPT === "full" ? "full" : "compact", // the rare careful review: compact notes plus its last thoughts, unless S2_DEEP_PROMPT=full
+};
+
+// ---- thinking only when something is new (cost phase C) ----
+//
+// A pet that is asleep, or charging, or doing the same thing in the same place with the same needs, has little new to think
+// about, and a thought then tends to repeat the last one. Before it thinks, the pet's situation is boiled down to a short
+// signature (room, what it is doing in broad terms, battery and need bands, who is near, whether the tone is audible, and
+// whether it has had a new memory, surprise, event, claim, belief or dream). If it is the same as at the last thought, the
+// thought is skipped and the next one waits longer (up to 4 times as long), starting again as soon as anything changes.
+// S2_GATE=off thinks on the clock as before.
+export const gateSettings = { on: process.env.S2_GATE !== "off", maxStretch: 4 };
+
+const ACTION_CLASS: Record<string, string> = {
+  sleep: "sleep", charge: "charge", dormant: "dormant", seek_light: "seek", follow_tone: "follow", go_to_place: "follow", explore_door: "door", open_door: "door",
+  approach_pet: "social", socialize: "social", approach_object: "look", inspect: "look", wander: "roam", pause: "roam", avoid: "roam",
+};
+const ROUTINE = /nothing pressing, wandering|^D\d+ \d\d:\d\d (night and tired|very tired|resting)/;
+
+export function situation(p: PetState, room: string, nearby: number): string {
+  const m = p.mind;
+  const lastEvent = [...m.episodes].reverse().find((e) => !ROUTINE.test(e));
+  const lastScene = m.scenes.reduce((t, s) => Math.max(t, s.tSec), 0);
+  const lastSurprise = p.predict?.recent.length ? p.predict.recent[p.predict.recent.length - 1].tSec : 0;
+  return [
+    room, p.mode, ACTION_CLASS[p.s1.action] ?? p.s1.action, Math.floor(p.energy / 20), Math.floor(p.drives.curiosity * 4), Math.floor(p.drives.social * 4), Math.floor(p.drives.rest * 4),
+    nearby, m.sensed.tone ? 1 : 0, m.sensed.touch ?? "", (lastEvent ?? "").replace(/^D\d+ \d\d:\d\d /, ""), m.scenes.length, lastScene, lastSurprise,
+    m.claims.length, m.beliefs.length, m.dreams.length ? m.dreams[m.dreams.length - 1].id : "", m.lastSleep ? m.lastSleep.atSec : 0, m.intention ? m.intention.goal : "",
+  ].join("|");
+}
 
 function systemCompact(habits: boolean): string {
   return `You are the slow inner voice (System 2) of a small pet in a house with other pets, a human and a wise Teacher (it explains things, answers questions, can change a room). You are not an assistant. Use only the notes below; never invent places, objects or events.\n` +
@@ -155,8 +186,14 @@ export function buildNotesCompact(p: PetState, day: number, timeOfDay: number, n
   ].filter((x): x is string => !!x).join("\n");
 }
 
-export function buildPrompt(p: PetState, day: number, timeOfDay: number, nearby = 0, nowSec?: number, deep = false, habits = false, mode: PromptMode = promptSettings.mode): { system: string; user: string } {
+const REVIEW = ` This is a rare, careful review. Read your last few thoughts below with an honest eye: if any were mistaken, repeated, confused, or went beyond what the notes support, correct them now (put wrong beliefs in "retract" and write the better ones in "beliefs"), and choose a question you have not asked before.`;
+
+export function buildPrompt(p: PetState, day: number, timeOfDay: number, nearby = 0, nowSec?: number, deep = false, habits = false, mode: PromptMode = promptSettings.mode, deepMode: PromptMode = promptSettings.deep): { system: string; user: string } {
   if (mode === "compact" && !deep) return { system: systemCompact(habits), user: buildNotesCompact(p, day, timeOfDay, nearby, nowSec, habits) };
+  if (mode === "compact" && deepMode === "compact") { // the careful review on the compact notes, with its last thoughts to look back over
+    const recent = p.mind.recentThoughts.length ? p.mind.recentThoughts.map((t) => `- ${t}`).join("\n") : "- (none yet)";
+    return { system: systemCompact(habits) + REVIEW, user: `${buildNotesCompact(p, day, timeOfDay, nearby, nowSec, habits)}\nYour last few thoughts (review them):\n${recent}` };
+  }
   const system =
     `You are the slow, deliberate inner voice (System 2) of ${p.name}, a small pet living in a simple 2D room with two other pets and a human. A wise Teacher also lives in the room: it explains things, answers questions and can change the room (lamp, heater, curtain, door) when that is a good idea. ` +
     `You are not an assistant. You only know the notes you are given; never invent places, objects or events that are not in the notes. ` +
@@ -180,7 +217,7 @@ export function buildPrompt(p: PetState, day: number, timeOfDay: number, nearby 
   // A rare, careful moment: look back over the last few thoughts and correct what was mistaken or stuck in a loop.
   const recent = p.mind.recentThoughts.length ? p.mind.recentThoughts.map((t) => `- ${t}`).join("\n") : "- (none yet)";
   return {
-    system: system + ` This is a rare, careful review. Read your last few thoughts below with an honest eye: if any were mistaken, repeated, confused, or went beyond what the notes support, correct them now (put wrong beliefs in "retract" and write the better ones in "beliefs"), and choose a question you have not asked before.`,
+    system: system + REVIEW,
     user: `${buildNotes(p, day, timeOfDay, nearby, nowSec, habits)}\nYour last few thoughts (review them):\n${recent}`,
   };
 }
@@ -268,6 +305,8 @@ export class System2 {
   disposed = false;
   private due = new Map<string, number>();
   private busy = new Set<string>();
+  private lastSituation = new Map<string, string>(); // the situation at each pet's last thought
+  private stretch = new Map<string, number>(); // how many times longer than usual to wait, after skipped thoughts
   private warned = false;
 
   constructor(
@@ -291,6 +330,17 @@ export class System2 {
     this.sim.pets.forEach((p, i) => {
       if (!this.due.has(p.id)) this.due.set(p.id, now + 10_000 + i * 20_000); // stagger the first thoughts
       if (this.busy.has(p.id) || now < this.due.get(p.id)!) return;
+      const sig = situation(p, this.sim.world.roomIdAt(p.x, p.y), this.conversation?.nearbyCount(p) ?? 0);
+      if (gateSettings.on && sig === this.lastSituation.get(p.id)) {
+        // nothing new since its last thought: skip this one and wait longer next time
+        const n = Math.min(gateSettings.maxStretch, (this.stretch.get(p.id) ?? 1) + 1);
+        this.stretch.set(p.id, n);
+        p.stats.s2Skipped = (p.stats.s2Skipped ?? 0) + 1;
+        this.due.set(p.id, now + this.opts.intervalSec * 1000 * n * (0.8 + this.rand() * 0.5));
+        return;
+      }
+      this.lastSituation.set(p.id, sig);
+      this.stretch.set(p.id, 1);
       this.busy.add(p.id);
       void this.think(p).finally(() => {
         this.busy.delete(p.id);
@@ -308,7 +358,7 @@ export class System2 {
     const nearby = this.conversation?.nearbyCount(p) ?? 0;
     let deep = wantsDeep;
     let prompt = buildPrompt(p, day, tod, nearby, this.sim.simSec, deep, this.sim.ruleLearning);
-    const shown = promptSettings.mode === "compact" && !deep ? 2 : undefined; // how many memories and gists the prompt shows
+    const shown = promptSettings.mode === "compact" && (!deep || promptSettings.deep === "compact") ? 2 : undefined; // how many memories and gists the prompt shows
     markUsed(p, this.sim.simSec, shown); // these memories were shown, so they count as used
     markGistsUsed(p, this.sim.simSec, shown);
     const patienceMs = (this.opts.patienceSec ?? 240) * 1000;

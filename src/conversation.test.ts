@@ -181,3 +181,29 @@ test("a pet's question to the Teacher is spoken aloud, so the chat shows both si
   assert.equal(await conv.petAsksTeacher(pip, "Anyone there?"), null, "a sleeping pet asks nothing aloud");
   assert.equal(await conv.petAsksTeacher(moss, '{"reply": "x"}'), null, "structured text is never spoken");
 });
+
+import { chatSettings } from "./conversation.js";
+
+test("a message to everyone is answered by the nearest two pets, not every pet in earshot", async () => {
+  const reply = () => '{"understood":{"intent":"greeting","topic":"hello"},"claims":[],"reply":"Hi there."}';
+  const { conv, calls, coco } = await setup(reply);
+  coco.x = 540; coco.y = 380; // all three are within earshot of the human
+  await conv.humanSays({ kind: "all" }, "Hello everyone", true);
+  await wait(3600);
+  assert.equal(calls.length, chatSettings.maxRepliers, `two answered (${calls.length})`);
+  assert.equal(chatSettings.maxRepliers, 2);
+
+  const was = chatSettings.maxRepliers;
+  chatSettings.maxRepliers = 3;
+  const more = await setup(reply);
+  more.coco.x = 540; more.coco.y = 380;
+  await more.conv.humanSays({ kind: "all" }, "Hello everyone", true);
+  await wait(5200);
+  chatSettings.maxRepliers = was;
+  assert.equal(more.calls.length, 3, "the limit can be raised");
+
+  const one = await setup(reply);
+  await one.conv.humanSays({ kind: "pet", id: "pip" }, "Hello Pip", false);
+  await wait(1800);
+  assert.equal(one.calls.length, 1, "a message to one pet is always answered by that pet");
+});

@@ -11,7 +11,7 @@ import { Rng } from "./rng.js";
 import type { Simulation } from "./sim.js";
 import { looksLikeJson, type Target, type Utterance } from "./speech.js";
 import type { Store } from "./store.js";
-import { buildNotes, type TeacherHook } from "./system2.js";
+import { buildNotes, buildNotesCompact, promptSettings, type TeacherHook } from "./system2.js";
 import { OVERRIDE_FIELDS, ROOM_FIELDS, parseOverride } from "./world.js";
 import { LEGACY, blockedAt, centerOf, objectById, type Layout } from "./layout.js";
 
@@ -100,8 +100,8 @@ export interface TeacherConfig {
 export const DEFAULT_TEACHER_CONFIG: Omit<TeacherConfig, "isPaused"> = {
   reviewEveryMin: 180,
   reviewMinRealSec: 600,
-  maxCallsPerHour: 30,
-  questionGapMin: 60,
+  maxCallsPerHour: 12,
+  questionGapMin: 180,
   providers: ["deepseek", "groq", "local"],
 };
 
@@ -225,6 +225,9 @@ const PLAN_SCHEMA =
   `"agenda": [{"in_minutes": integer 0-720 (simulated minutes from now), "kind": "lesson"|"observe"|"env", "target": "<petId>"|"all", "where": "near_target"|"center"|"<objectId>", ` +
   `"topic": string (max 80), "outline": string (max 300: what you will teach, or what you will watch for), "env": null or {"field": string, "value": string|number|boolean, "reason": string (max 120)}}] ` +
   `(5 to 9 items covering the next 12 simulated hours, spread out, mixing lessons with quiet observation; "env" kind needs an env object)}.`;
+
+/** What the Teacher is told about a pet when it teaches or answers: the pet's own notes, in the compact form unless S2_PROMPT=full. */
+const petNotes = (pet: PetState, day: number, tod: number) => (promptSettings.mode === "compact" ? buildNotesCompact(pet, day, tod, 0) : buildNotes(pet, day, tod, 0));
 
 export function roomFacts(layout: Layout = LEGACY): string {
   const rooms = layout.rooms.length > 1 ? ` Rooms: ${layout.rooms.map((r) => `${r.id} (${r.name})`).join(", ")}. Doors: ${layout.doors.map((d) => `${d.id} joins ${d.a} and ${d.b}`).join("; ")}. Every room has its own charger pad, window, lamp and heater; each pad hums at its own pitch.` : "";
@@ -613,7 +616,7 @@ export class Teacher implements TeacherHook {
     const pet = this.sim.pets.find((p) => p.id === a.target);
     const who = pet ? pet.name : "all of the pets";
     const tod = this.nowMin() % DAY;
-    const notes = pet ? buildNotes(pet, Math.floor(this.nowMin() / DAY) + 1, tod, 0) : this.sim.pets.map((p) => this.petBrief(p)).join("\n");
+    const notes = pet ? petNotes(pet, Math.floor(this.nowMin() / DAY) + 1, tod) : this.sim.pets.map((p) => this.petBrief(p)).join("\n");
     const goals = this.state.plan?.long.map((g) => g.goal).join("; ") ?? "";
     const messages: ChatMessage[] = [
       {
@@ -682,7 +685,7 @@ export class Teacher implements TeacherHook {
             role: "user",
             content:
               `${pet.name} asks: "${q.text}"\nEnvironment now: weather ${e.weather}, sun ${Math.round(e.sunIntensity * 100)}%, indoor ${e.indoorTemp}C, curtain ${e.curtainOpen ? "open" : "closed"}, door ${e.doorOpen ? "open" : "closed"}, lamp ${e.lampOn ? "on" : "off"}, heater ${e.heaterOn ? "on" : "off"}.\n` +
-              `Your long-term goals: ${goals}\n${roomFacts(this.sim.world.layout)}\nWhat you know about ${pet.name}:\n${buildNotes(pet, Math.floor(this.nowMin() / DAY) + 1, tod, 0)}`,
+              `Your long-term goals: ${goals}\n${roomFacts(this.sim.world.layout)}\nWhat you know about ${pet.name}:\n${petNotes(pet, Math.floor(this.nowMin() / DAY) + 1, tod)}`,
           },
         ],
         { maxTokens: 500, temperature: 0.7, json: true, tag: { kind: "teacher-answer", pet: pet.id } },

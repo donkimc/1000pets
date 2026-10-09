@@ -104,10 +104,10 @@ const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483
 const vnow = () => (sim.simSec * 1000) / SPEED; // real milliseconds, as they would have passed
 const never = () => false;
 const conversation = new Conversation(sim, llm as any, store, () => {});
-const system2 = new System2(sim, llm, store, { intervalSec: INTERVAL, patienceSec: 0, deepEvery: Number(process.env.S2_DEEP_EVERY ?? 4), isPaused: never, now: vnow, random });
+const system2 = new System2(sim, llm, store, { intervalSec: INTERVAL, patienceSec: 0, deepEvery: Number(process.env.S2_DEEP_EVERY ?? 8), isPaused: never, now: vnow, random });
 system2.conversation = conversation;
 const teacher = new Teacher(sim, llm as any, store, { set: async (f, v, _s, _r) => { const r = world.setOverride(f, v); return { field: r.field, from: r.from, to: r.to, mode: r.mode }; }, recent: async () => [] }, conversation, {
-  isPaused: never, reviewEveryMin: 180, reviewMinRealSec: 600, maxCallsPerHour: 30, now: vnow,
+  isPaused: never, reviewEveryMin: 180, reviewMinRealSec: 600, maxCallsPerHour: Number(process.env.TEACHER_MAX_CALLS_PER_HOUR ?? 12), questionGapMin: Number(process.env.TEACHER_QUESTION_GAP_MIN ?? 180), now: vnow,
 }, null, SEED);
 system2.teacher = teacher;
 const consolidator = new Consolidator(sim, llm as any, store, { isPaused: never });
@@ -135,10 +135,12 @@ for (const k of v.byKind) {
 const tokPerDay = (v.total.tokensIn + v.total.tokensOut) / days;
 console.log("-".repeat(71));
 console.log("TOTAL".padEnd(16) + pad((v.total.calls / days).toFixed(0), 10) + pad("", 8) + pad("", 9) + pad(Math.round(tokPerDay).toLocaleString(), 12) + pad("100%", 7) + pad(usd(v.total.costUsd / days), 9));
+const made = sim.pets.reduce((n, p) => n + p.stats.s2Thoughts, 0), skipped = sim.pets.reduce((n, p) => n + (p.stats.s2Skipped ?? 0), 0);
+console.log(`\nSlow thoughts made: ${(made / days).toFixed(0)} a day; skipped because nothing was new: ${(skipped / days).toFixed(0)} a day (${Math.round((100 * skipped) / Math.max(1, made + skipped))}% of the times one was due).`);
 console.log(`\nWith the provider's prompt cache (a repeated prompt start is billed at ${usd(PRICE_HIT / 1000)} per thousand tokens instead of ${usd(PRICE_IN / 1000)}): ${usd(v.total.costUsd / days)} a day; without any caching: ${usd(llm.noCache / days)} a day. ${Math.round((v.total.cachedIn / Math.max(1, v.total.tokensIn)) * 100)}% of input tokens were a repeated start.`);
 console.log(`\nPer simulated day: ${Math.round(tokPerDay).toLocaleString()} tokens, ${usd(v.total.costUsd / days)} at DeepSeek list price (all calls paid, as on the hosted site, which has no local model).`);
 console.log(`Per pet per hour of simulated time: ${Math.round(tokPerDay / pets / 24).toLocaleString()} tokens.`);
 console.log(`At ${SPEED}x speed that is ${usd((v.total.costUsd / days) * SPEED / 24)} per real hour, ${usd(v.total.costUsd / days * SPEED)} per real day.`);
 const out = arg("json", "");
-if (out) writeFileSync(out, JSON.stringify({ days: DAYS, speed: SPEED, seed: SEED, layout: LAYOUT, intervalSec: INTERVAL, promptMode: process.env.S2_PROMPT ?? "compact", tokensPerDay: tokPerDay, costPerDay: v.total.costUsd / days, costPerDayNoCache: llm.noCache / days, cachedShare: v.total.cachedIn / Math.max(1, v.total.tokensIn), byKind: v.byKind }, null, 2));
+if (out) writeFileSync(out, JSON.stringify({ days: DAYS, speed: SPEED, seed: SEED, layout: LAYOUT, intervalSec: INTERVAL, promptMode: process.env.S2_PROMPT ?? "compact", gate: process.env.S2_GATE ?? "on", deepEvery: Number(process.env.S2_DEEP_EVERY ?? 8), deepPrompt: process.env.S2_DEEP_PROMPT ?? "compact", thoughtsMade: made, thoughtsSkipped: skipped, tokensPerDay: tokPerDay, costPerDay: v.total.costUsd / days, costPerDayNoCache: llm.noCache / days, cachedShare: v.total.cachedIn / Math.max(1, v.total.tokensIn), byKind: v.byKind }, null, 2));
 process.exit(0);

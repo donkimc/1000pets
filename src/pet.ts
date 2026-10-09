@@ -123,6 +123,7 @@ export interface PetStats {
   s2Thoughts: number;
   spoke: number;
   heard: number;
+  s2Skipped?: number; // slow thoughts skipped because nothing was new
   roomSec?: Record<string, number>; // simulated seconds spent in each room
   chargeSec?: Record<string, number>; // ... of which charging, by room
   crossings?: number; // times it went from one room to another
