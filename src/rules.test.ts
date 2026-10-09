@@ -428,3 +428,17 @@ test("the notes for System 2 include the habits block only when asked", () => {
   assert.match(buildNotes(p, 1, 600, 0, 600, true), /My habits \(small things about how I live that I am allowed to try changing a little\):/);
   assert.ok(MIN_AGE_SEC === DAY, "a pet watches itself for a day first");
 });
+
+test("habit state saved by an older version (no step multipliers, no chronic counters) loads and keeps running", () => {
+  const sim = new Simulation(new World(1), 1, roster);
+  sim.ruleLearning = true;
+  const snap = JSON.parse(JSON.stringify(sim.snapshot()));
+  snap.ruleLearning = true;
+  snap.pets[0].rules = { values: {}, trial: null, history: [], cooldownUntil: 0, unsafeUntil: {}, seen: false, born: 0 }; // as an older version wrote it
+  const again = new Simulation(new World(1), 1, roster, snap);
+  assert.deepEqual(again.pets[0].rules!.mult, {}, "the missing step multipliers are filled in");
+  assert.deepEqual(Object.keys(again.pets[0].rules!.chronic).sort(), ["curiosity", "lowBattery", "rest", "social"]);
+  const r = proposeTune(again.pets[0], 100, "socialAt", "down", "test", "thinking"); // this is what used to throw
+  assert.ok(r.event || r.why, "a proposal was considered without throwing");
+  for (let s = 5; s <= 7200; s += 5) again.step(s * 1000);
+});

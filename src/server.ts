@@ -15,6 +15,7 @@ import { resetRules, ruleView } from "./rules.js";
 import { Consolidator } from "./sleep.js";
 import { Dreamer } from "./dreams.js";
 import { UsageLedger, type UsageData } from "./usage.js";
+import { isHosted } from "./hosting.js";
 import { readFileSync } from "node:fs";
 import { Simulation, type SimSnapshot } from "./sim.js";
 import { TEACHER_VOICE, hueOf, type PetDef } from "./pet.js";
@@ -37,7 +38,11 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN ?? "";
 // plain text, no accounts, no lockout. Set RESUME_PASSWORD to something else, or to nothing at all to switch it off.
 const RESUME_PASSWORD = process.env.RESUME_PASSWORD ?? "1234";
 // A hosted copy never starts running by itself. (Railway sets one of these; START_PAUSED=off overrides, START_PAUSED=on forces it anywhere.)
-const HOSTED = !!(process.env.RAILWAY_ENVIRONMENT_NAME || process.env.RAILWAY_ENVIRONMENT || process.env.RAILWAY_PROJECT_ID);
+const HOSTED = isHosted();
+// Nobody watching: after this many minutes with no page open, the model-calling parts (thinking, the Teacher, night summaries, dreams) wait; the simulation itself carries on. Default 10 on a hosted copy, off elsewhere.
+const IDLE_PAUSE_MIN = Number(process.env.IDLE_LLM_PAUSE_MIN ?? (HOSTED ? 10 : 0));
+let lastClientAt = Date.now();
+const idleHold = () => IDLE_PAUSE_MIN > 0 && wss.clients.size === 0 && Date.now() - lastClientAt > IDLE_PAUSE_MIN * 60_000;
 const RUN_ID = process.env.RUN_ID ?? "main";
 const SEED = Number(process.env.SEED ?? 12345);
 
@@ -69,6 +74,8 @@ const wss = new WebSocketServer({ server, path: "/ws" });
 // connection or released finger always stops the avatar.
 const input = { dx: 0, dy: 0, at: 0, yaw: undefined as number | undefined };
 wss.on("connection", (ws) => {
+  lastClientAt = Date.now();
+  ws.on("close", () => { lastClientAt = Date.now(); });
   ws.on("message", (raw) => {
     try {
       const m = JSON.parse(String(raw));
@@ -164,26 +171,28 @@ async function loadSession() {
   world = new World(SEED, savedWorld ?? undefined, layout);
   sim = new Simulation(world, SEED, defaultRoster, savedSim ?? undefined);
   if (savedSim?.ruleLearning === undefined) sim.ruleLearning = process.env.RULE_LEARNING === "on"; // off unless switched on; a save remembers its own setting
-  system2 = new System2(sim, llm, store, { intervalSec: Number(process.env.S2_INTERVAL_SEC ?? 70), patienceSec: Number(process.env.S2_PATIENCE_SEC ?? 240), deepEvery: Number(process.env.S2_DEEP_EVERY ?? 8), isPaused: () => clock.paused });
+  // Routine thoughts go to the local model if there is one, and are skipped (not sent to a paid model) when it is busy; S2_ROUTINE_PROVIDERS (comma list, e.g. "groq,deepseek") overrides.
+  const routineProviders = process.env.S2_ROUTINE_PROVIDERS ? process.env.S2_ROUTINE_PROVIDERS.split(",").map((x) => x.trim()).filter(Boolean) : llm.snapshot().some((p) => p.name === "local") ? ["local"] : undefined;
+  system2 = new System2(sim, llm, store, { intervalSec: Number(process.env.S2_INTERVAL_SEC ?? (HOSTED ? 180 : 70)), patienceSec: Number(process.env.S2_PATIENCE_SEC ?? 240), deepEvery: Number(process.env.S2_DEEP_EVERY ?? 8), isPaused: () => clock.paused || idleHold(), routineProviders });
   conversation = new Conversation(sim, llm, store, broadcast);
   system2.conversation = conversation;
   teacher = new Teacher(sim, llm, store, envControl, conversation, {
-    isPaused: () => clock.paused,
+    isPaused: () => clock.paused || idleHold(),
     reviewEveryMin: Number(process.env.TEACHER_REVIEW_SIM_MIN ?? 180),
     reviewMinRealSec: Number(process.env.TEACHER_REVIEW_MIN_REAL_SEC ?? 600),
     maxCallsPerHour: Number(process.env.TEACHER_MAX_CALLS_PER_HOUR ?? 12),
     questionGapMin: Number(process.env.TEACHER_QUESTION_GAP_MIN ?? 180),
   }, savedTeacher, SEED);
   system2.teacher = teacher;
-  consolidator = new Consolidator(sim, llm, store, { isPaused: () => clock.paused });
-  dreamer = new Dreamer(sim, llm, store, { isPaused: () => clock.paused });
+  consolidator = new Consolidator(sim, llm, store, { isPaused: () => clock.paused || idleHold() });
+  dreamer = new Dreamer(sim, llm, store, { isPaused: () => clock.paused || idleHold() });
   lastLoggedHour = Math.floor(world.snap.simMinute / 60);
   lastMetricsQuarter = Math.floor(world.snap.simMinute / 15);
 }
 await loadSession();
 
 function status() {
-  return { runId: RUN_ID, simTimeMs: clock.simTimeMs, ...clock.parts, speed: clock.speed, paused: clock.paused, resumeNeedsPassword: !!RESUME_PASSWORD };
+  return { runId: RUN_ID, simTimeMs: clock.simTimeMs, ...clock.parts, speed: clock.speed, paused: clock.paused, resumeNeedsPassword: !!RESUME_PASSWORD, llmIdle: idleHold() };
 }
 
 function petView() {
@@ -305,7 +314,7 @@ app.get("/api/llm/test/:provider", async (req, res) => {
 });
 app.get("/api/usage", (_req, res) => {
   const ds = llm.snapshot().find((p) => p.name === "deepseek");
-  res.json({ ...ledger.view(Date.now(), ds && ds.budgetUsd !== undefined ? { budgetUsd: ds.budgetUsd, spentUsd: ds.spendUsd } : undefined), budget: ds ? { provider: "deepseek", budgetUsd: ds.budgetUsd ?? null, spentUsd: ds.spendUsd, teacherSpentUsd: ds.teacherSpendUsd } : null, speed: clock.speed, paused: clock.paused });
+  res.json({ ...ledger.view(Date.now(), ds && ds.budgetUsd !== undefined ? { budgetUsd: ds.budgetUsd, spentUsd: ds.spendUsd } : undefined), budget: ds ? { provider: "deepseek", budgetUsd: ds.budgetUsd ?? null, spentUsd: ds.spendUsd, teacherSpentUsd: ds.teacherSpendUsd, dailyBudgetUsd: ds.dailyBudgetUsd ?? null, daySpendUsd: ds.daySpendUsd ?? 0 } : null, llmIdle: idleHold(), speed: clock.speed, paused: clock.paused });
 });
 app.get("/api/llm", (_req, res) => {
   const now = Date.now();

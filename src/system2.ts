@@ -104,33 +104,29 @@ export function buildNotes(p: PetState, day: number, timeOfDay: number, nearby =
 export type PromptMode = "compact" | "full";
 export const promptSettings: { mode: PromptMode; deep: PromptMode } = {
   mode: process.env.S2_PROMPT === "full" ? "full" : "compact",
-  deep: process.env.S2_DEEP_PROMPT === "full" ? "full" : "compact", // the rare careful review: compact notes plus its last thoughts, unless S2_DEEP_PROMPT=full
+  deep: process.env.S2_DEEP_PROMPT === "compact" ? "compact" : "full", // the rare careful review keeps the full prompt (the quality check was inconclusive for the compact one: S2_DEEP_PROMPT=compact to try it)
 };
 
 // ---- thinking only when something is new (cost phase C) ----
 //
 // A pet that is asleep, or charging, or doing the same thing in the same place with the same needs, has little new to think
 // about, and a thought then tends to repeat the last one. Before it thinks, the pet's situation is boiled down to a short
-// signature (room, what it is doing in broad terms, battery and need bands, who is near, whether the tone is audible, and
-// whether it has had a new memory, surprise, event, claim, belief or dream). If it is the same as at the last thought, the
+// signature (room, asleep or charging or awake, battery and need bands, who is near, whether the tone is audible, and
+// whether it has had a new memory, surprise, claim, belief, dream or intention). If it is the same as at the last thought, the
 // thought is skipped and the next one waits longer (up to 4 times as long), starting again as soon as anything changes.
 // S2_GATE=off thinks on the clock as before.
 export const gateSettings = { on: process.env.S2_GATE !== "off", maxStretch: 4 };
 
-const ACTION_CLASS: Record<string, string> = {
-  sleep: "sleep", charge: "charge", dormant: "dormant", seek_light: "seek", follow_tone: "follow", go_to_place: "follow", explore_door: "door", open_door: "door",
-  approach_pet: "social", socialize: "social", approach_object: "look", inspect: "look", wander: "roam", pause: "roam", avoid: "roam",
-};
-const ROUTINE = /nothing pressing, wandering|^D\d+ \d\d:\d\d (night and tired|very tired|resting)/;
-
 export function situation(p: PetState, room: string, nearby: number): string {
   const m = p.mind;
-  const lastEvent = [...m.episodes].reverse().find((e) => !ROUTINE.test(e));
   const lastScene = m.scenes.reduce((t, s) => Math.max(t, s.tSec), 0);
   const lastSurprise = p.predict?.recent.length ? p.predict.recent[p.predict.recent.length - 1].tSec : 0;
+  // What it is doing and what it just felt are left out on purpose: they flicker every few seconds (wander, avoid, pause, a touch)
+  // and would make every moment look new. A bump or a loud sound that matters becomes a memory, which is in here.
+  const awake = p.mode === "sleeping" || p.mode === "dormant" || p.mode === "charging" ? p.mode : "awake";
   return [
-    room, p.mode, ACTION_CLASS[p.s1.action] ?? p.s1.action, Math.floor(p.energy / 20), Math.floor(p.drives.curiosity * 4), Math.floor(p.drives.social * 4), Math.floor(p.drives.rest * 4),
-    nearby, m.sensed.tone ? 1 : 0, m.sensed.touch ?? "", (lastEvent ?? "").replace(/^D\d+ \d\d:\d\d /, ""), m.scenes.length, lastScene, lastSurprise,
+    room, awake, Math.floor(p.energy / 20), Math.floor(p.drives.curiosity * 4), Math.floor(p.drives.social * 4), Math.floor(p.drives.rest * 4),
+    nearby, m.sensed.tone ? 1 : 0, m.scenes.length, lastScene, lastSurprise,
     m.claims.length, m.beliefs.length, m.dreams.length ? m.dreams[m.dreams.length - 1].id : "", m.lastSleep ? m.lastSleep.atSec : 0, m.intention ? m.intention.goal : "",
   ].join("|");
 }
@@ -305,6 +301,7 @@ export class System2 {
   disposed = false;
   private due = new Map<string, number>();
   private busy = new Set<string>();
+  private lastThoughtAt = new Map<string, number>(); // when each pet last finished a thought
   private lastSituation = new Map<string, string>(); // the situation at each pet's last thought
   private stretch = new Map<string, number>(); // how many times longer than usual to wait, after skipped thoughts
   private warned = false;
@@ -313,7 +310,7 @@ export class System2 {
     private sim: Simulation,
     private llm: LlmGateway,
     private store: Store,
-    private opts: { intervalSec: number; patienceSec?: number; deepEvery?: number; isPaused: () => boolean; now?: () => number; random?: () => number },
+    private opts: { intervalSec: number; patienceSec?: number; deepEvery?: number; isPaused: () => boolean; now?: () => number; random?: () => number; routineProviders?: string[] },
   ) {}
 
   private now() { return this.opts.now ? this.opts.now() : Date.now(); }
@@ -329,21 +326,30 @@ export class System2 {
     const now = this.now();
     this.sim.pets.forEach((p, i) => {
       if (!this.due.has(p.id)) this.due.set(p.id, now + 10_000 + i * 20_000); // stagger the first thoughts
-      if (this.busy.has(p.id) || now < this.due.get(p.id)!) return;
-      const sig = situation(p, this.sim.world.roomIdAt(p.x, p.y), this.conversation?.nearbyCount(p) ?? 0);
-      if (gateSettings.on && sig === this.lastSituation.get(p.id)) {
-        // nothing new since its last thought: skip this one and wait longer next time
-        const n = Math.min(gateSettings.maxStretch, (this.stretch.get(p.id) ?? 1) + 1);
-        this.stretch.set(p.id, n);
-        p.stats.s2Skipped = (p.stats.s2Skipped ?? 0) + 1;
-        this.due.set(p.id, now + this.opts.intervalSec * 1000 * n * (0.8 + this.rand() * 0.5));
-        return;
-      }
-      this.lastSituation.set(p.id, sig);
+      if (this.busy.has(p.id)) return;
+      const due = this.due.get(p.id)!;
+      if (gateSettings.on) {
+        const sig = situation(p, this.sim.world.roomIdAt(p.x, p.y), this.conversation?.nearbyCount(p) ?? 0);
+        const known = this.lastSituation.has(p.id);
+        if (known && sig === this.lastSituation.get(p.id)) {
+          // nothing new since its last thought: when this one is due, skip it and wait longer next time
+          if (now < due) return;
+          const n = Math.min(gateSettings.maxStretch, (this.stretch.get(p.id) ?? 1) + 1);
+          this.stretch.set(p.id, n);
+          p.stats.s2Skipped = (p.stats.s2Skipped ?? 0) + 1;
+          this.due.set(p.id, now + this.opts.intervalSec * 1000 * n * (0.8 + this.rand() * 0.5));
+          return;
+        }
+        // Something changed. Even if the wait was stretched, it thinks as soon as the shortest ordinary gap since its last thought has passed.
+        const earliest = known ? Math.min(due, (this.lastThoughtAt.get(p.id) ?? -Infinity) + this.opts.intervalSec * 800) : due;
+        if (now < earliest) return;
+        this.lastSituation.set(p.id, sig);
+      } else if (now < due) return;
       this.stretch.set(p.id, 1);
       this.busy.add(p.id);
       void this.think(p).finally(() => {
         this.busy.delete(p.id);
+        this.lastThoughtAt.set(p.id, this.now());
         this.due.set(p.id, this.now() + this.opts.intervalSec * 1000 * (0.8 + this.rand() * 0.5));
       });
     });
@@ -362,6 +368,8 @@ export class System2 {
     markUsed(p, this.sim.simSec, shown); // these memories were shown, so they count as used
     markGistsUsed(p, this.sim.simSec, shown);
     const patienceMs = (this.opts.patienceSec ?? 240) * 1000;
+    // Routine thoughts may be limited to certain providers (the local model): if it is busy the thought is skipped rather than sent to a paid one.
+    const routine = this.opts.routineProviders?.length ? { providers: this.opts.routineProviders } : {};
     const ask = (pr: { system: string; user: string }, o: Record<string, unknown>) =>
       this.llm.complete([{ role: "system", content: pr.system }, { role: "user", content: pr.user }], { maxTokens: deep || promptSettings.mode === "full" ? 900 : 450, tag: { kind: deep ? "deep" : "thought", pet: p.id }, ...o });
     let result;
@@ -369,12 +377,12 @@ export class System2 {
       try {
         result = deep
           ? await ask(prompt, { temperature: 0.7, providers: ["deepseek", "groq"] }) // its cost counts toward the pets' ceiling
-          : await ask(prompt, { temperature: 0.8, patienceMs });
+          : await ask(prompt, { temperature: 0.8, patienceMs, ...routine });
       } catch (e) {
         if (!deep || !(e instanceof LlmUnavailable)) throw e;
         deep = false; // the stronger models are unavailable (e.g. the ceiling is reached): think the ordinary way
         prompt = buildPrompt(p, day, tod, nearby, this.sim.simSec, false, this.sim.ruleLearning);
-        result = await ask(prompt, { temperature: 0.8, patienceMs });
+        result = await ask(prompt, { temperature: 0.8, patienceMs, ...routine });
       }
     } catch (e) {
       if (!(e instanceof LlmUnavailable)) console.error("system2 error", e);

@@ -7,7 +7,7 @@ import { sense, type NearThing, type Observation, type Sound } from "./sensors.j
 import { decide, updateDrives, type Decision } from "./system1.js";
 import { captureSurpriseScene, closeLoop, updateOdometry, watchScenes } from "./scenes.js";
 import { takePeak, updatePredictions, type Surprise } from "./predict.js";
-import { tickRules, type RuleEvent } from "./rules.js";
+import { repairRules, tickRules, type RuleEvent } from "./rules.js";
 import { describeTone, toneKey, updateCues } from "./cues.js";
 import { observeOthers } from "./relations.js";
 import { observePlaces, repairPlaces } from "./places.js";
@@ -95,6 +95,7 @@ export class Simulation {
       p.mind.sensed.tone ??= "";
       p.odo ??= { x: 0, y: 0 };
       if (p.places) repairPlaces(p.places); // a map saved by an older version
+      if (p.rules) repairRules(p.rules, snap?.simSec ?? 0); // ... and habit state
       p.mind.sensed.near ??= []; // saves from before the near-field sense
       p.stats ??= newStats();
       p.stats.roomSec ??= {}; p.stats.chargeSec ??= {}; p.stats.crossings ??= 0; p.stats.doorsOpened ??= 0; // saves from before rooms

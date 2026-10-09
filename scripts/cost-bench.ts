@@ -15,7 +15,7 @@ import { Simulation, DT } from "../src/sim.js";
 import { World } from "../src/world.js";
 import { LAYOUTS } from "../src/layout.js";
 import type { Store } from "../src/store.js";
-import { System2 } from "../src/system2.js";
+import { System2, situation } from "../src/system2.js";
 import { Conversation } from "../src/conversation.js";
 import { Teacher } from "../src/teacher.js";
 import { Consolidator } from "../src/sleep.js";
@@ -37,7 +37,8 @@ class BenchLlm extends LlmGateway {
   private n = new Map<string, number>();
   private lastPrompt = new Map<string, string>();
   noCache = 0; // what everything would have cost with no prompt caching at all
-  constructor(private ledger: UsageLedger, private day: () => number) {
+  thoughtAt: Record<string, number[]> = {}; // sim seconds at which each pet's thoughts were asked for
+  constructor(private ledger: UsageLedger, private day: () => number, private simNow: () => number = () => 0) {
     super([{ name: "bench", baseUrl: "", apiKey: "", model: "bench", priceInPerM: PRICE_IN, priceOutPerM: PRICE_OUT, rpm: 1e9 }]);
   }
   private count(key: string) { const v = (this.n.get(key) ?? 0) + 1; this.n.set(key, v); return v; }
@@ -75,6 +76,7 @@ class BenchLlm extends LlmGateway {
 
   override async complete(messages: ChatMessage[], opts: CompleteOpts = {}): Promise<LlmResult> {
     const kind = opts.tag?.kind ?? "other";
+    if ((kind === "thought" || kind === "deep") && opts.tag?.pet) (this.thoughtAt[opts.tag.pet] ??= []).push(this.simNow());
     const text = this.reply(kind, opts.tag?.pet);
     const tokensIn = messages.reduce((n, m) => n + est(m.content) + 4, 0), tokensOut = est(text);
     // The provider caches the start of a prompt it saw lately (in blocks of 64 tokens): how much of this one starts the same as the last of its kind?
@@ -98,7 +100,7 @@ const store = { dir, append: async () => {}, readLog: async () => [], readJson: 
 const world = new World(SEED, undefined, LAYOUTS[LAYOUT] ?? LAYOUTS.house);
 const sim = new Simulation(world, SEED, roster);
 const ledger = new UsageLedger();
-const llm = new BenchLlm(ledger, () => Math.floor(sim.simSec / 86400) + 1);
+const llm = new BenchLlm(ledger, () => Math.floor(sim.simSec / 86400) + 1, () => sim.simSec);
 let seed = SEED * 7919;
 const random = () => { seed = (seed * 16807) % 2147483647; return seed / 2147483647; };
 const vnow = () => (sim.simSec * 1000) / SPEED; // real milliseconds, as they would have passed
@@ -113,11 +115,17 @@ system2.teacher = teacher;
 const consolidator = new Consolidator(sim, llm as any, store, { isPaused: never });
 const dreamer = new Dreamer(sim, llm as any, store, { isPaused: never });
 
+const lastSig = new Map<string, string>(); const changes: Record<string, number[]> = {};
 const t0 = Date.now();
 const end = DAYS * 86400;
 for (let s = DT; s <= end; s += DT) {
   system2.tick(); teacher.tick(); consolidator.tick(); dreamer.tick();
   sim.step(s * 1000);
+  for (const p of sim.pets) { // when did something change that a pet might want to think about?
+    const sig = situation(p, world.roomIdAt(p.x, p.y), conversation.nearbyCount(p));
+    if (lastSig.get(p.id) !== undefined && lastSig.get(p.id) !== sig) (changes[p.id] ??= []).push(s);
+    lastSig.set(p.id, sig);
+  }
   await new Promise((r) => setImmediate(r)); // let the calls the stub started finish before the next step
 }
 await new Promise((r) => setTimeout(r, 200));
@@ -137,10 +145,17 @@ console.log("-".repeat(71));
 console.log("TOTAL".padEnd(16) + pad((v.total.calls / days).toFixed(0), 10) + pad("", 8) + pad("", 9) + pad(Math.round(tokPerDay).toLocaleString(), 12) + pad("100%", 7) + pad(usd(v.total.costUsd / days), 9));
 const made = sim.pets.reduce((n, p) => n + p.stats.s2Thoughts, 0), skipped = sim.pets.reduce((n, p) => n + (p.stats.s2Skipped ?? 0), 0);
 console.log(`\nSlow thoughts made: ${(made / days).toFixed(0)} a day; skipped because nothing was new: ${(skipped / days).toFixed(0)} a day (${Math.round((100 * skipped) / Math.max(1, made + skipped))}% of the times one was due).`);
+// How quickly does a pet get to think about a change? (from the change to the next thought asked for, in simulated seconds)
+const delays: number[] = [];
+for (const p of sim.pets) for (const c of changes[p.id] ?? []) { const next = (llm.thoughtAt[p.id] ?? []).find((t) => t >= c); if (next !== undefined) delays.push(next - c); }
+delays.sort((a, b) => a - b);
+const q = (f: number) => (delays.length ? delays[Math.min(delays.length - 1, Math.floor(f * delays.length))] : 0);
+const within = (sec: number) => (delays.length ? Math.round((100 * delays.filter((d) => d <= sec).length) / delays.length) : 0);
+console.log(`\nReaction to a change (${delays.length} changes): median ${q(0.5)} s, 90th percentile ${q(0.9)} s, ${within(120)}% thought about within 2 min, ${within(300)}% within 5 min (simulated time).`);
 console.log(`\nWith the provider's prompt cache (a repeated prompt start is billed at ${usd(PRICE_HIT / 1000)} per thousand tokens instead of ${usd(PRICE_IN / 1000)}): ${usd(v.total.costUsd / days)} a day; without any caching: ${usd(llm.noCache / days)} a day. ${Math.round((v.total.cachedIn / Math.max(1, v.total.tokensIn)) * 100)}% of input tokens were a repeated start.`);
 console.log(`\nPer simulated day: ${Math.round(tokPerDay).toLocaleString()} tokens, ${usd(v.total.costUsd / days)} at DeepSeek list price (all calls paid, as on the hosted site, which has no local model).`);
 console.log(`Per pet per hour of simulated time: ${Math.round(tokPerDay / pets / 24).toLocaleString()} tokens.`);
 console.log(`At ${SPEED}x speed that is ${usd((v.total.costUsd / days) * SPEED / 24)} per real hour, ${usd(v.total.costUsd / days * SPEED)} per real day.`);
 const out = arg("json", "");
-if (out) writeFileSync(out, JSON.stringify({ days: DAYS, speed: SPEED, seed: SEED, layout: LAYOUT, intervalSec: INTERVAL, promptMode: process.env.S2_PROMPT ?? "compact", gate: process.env.S2_GATE ?? "on", deepEvery: Number(process.env.S2_DEEP_EVERY ?? 8), deepPrompt: process.env.S2_DEEP_PROMPT ?? "compact", thoughtsMade: made, thoughtsSkipped: skipped, tokensPerDay: tokPerDay, costPerDay: v.total.costUsd / days, costPerDayNoCache: llm.noCache / days, cachedShare: v.total.cachedIn / Math.max(1, v.total.tokensIn), byKind: v.byKind }, null, 2));
+if (out) writeFileSync(out, JSON.stringify({ days: DAYS, speed: SPEED, seed: SEED, layout: LAYOUT, intervalSec: INTERVAL, promptMode: process.env.S2_PROMPT ?? "compact", gate: process.env.S2_GATE ?? "on", deepEvery: Number(process.env.S2_DEEP_EVERY ?? 8), deepPrompt: process.env.S2_DEEP_PROMPT ?? "full", thoughtsMade: made, thoughtsSkipped: skipped, reaction: { changes: delays.length, medianSec: q(0.5), p90Sec: q(0.9), within2min: within(120), within5min: within(300) }, tokensPerDay: tokPerDay, costPerDay: v.total.costUsd / days, costPerDayNoCache: llm.noCache / days, cachedShare: v.total.cachedIn / Math.max(1, v.total.tokensIn), byKind: v.byKind }, null, 2));
 process.exit(0);

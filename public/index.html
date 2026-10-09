@@ -249,7 +249,7 @@ const ANOMALY = new Set(["curtain_stuck"]);
 function render() {
   if (!state) return;
   $("time").textContent = `Day ${state.day} · ${pad(state.hour)}:${pad(state.minute)}:${pad(state.second || 0)}`;
-  $("meta").textContent = `${state.speed}× speed${state.paused ? " · paused" : ""}`;
+  $("meta").textContent = `${state.speed}× speed${state.paused ? " · paused" : ""}${state.llmIdle ? " · thinking on hold" : ""}`;
   $("pause").textContent = state.paused ? (state.resumeNeedsPassword ? "Resume (password)" : "Resume") : "Pause";
   document.querySelectorAll("#speeds button").forEach((b) => {
     const on = Number(b.dataset.s) === state.speed;

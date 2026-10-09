@@ -1,3 +1,5 @@
+import { isHosted } from "./hosting.js";
+
 // LLM gateway: tries providers in order (Groq first, DeepSeek as fallback), honours each provider's own
 // rate-limit replies, and tracks usage and DeepSeek spend. Never blocks the simulation: callers await it
 // off the tick path and simply skip a thought if nothing is available.
@@ -14,6 +16,7 @@ export interface ProviderConfig {
   priceOutPerM: number;
   rpm: number; // client-side requests-per-minute ceiling
   budgetUsd?: number; // stop using this provider once estimated spend reaches this
+  dailyBudgetUsd?: number; // ... and for the rest of a (UTC) day once it has spent this much that day
   timeoutMs?: number; // per-request timeout for this provider (default: gateway timeout, 30s)
   maxConcurrent?: number; // calls allowed at once; when full the provider counts as busy and the next one is tried
 }
@@ -59,7 +62,10 @@ export interface ProviderStats {
   lastError: string;
   lastErrorAt: number;
   lastRemaining: { requests?: string; tokens?: string };
+  dayKey?: number; // which UTC day daySpendUsd is for
+  daySpendUsd?: number; // spent today by the pets (the Teacher is not counted)
   budgetUsd?: number; // the provider's ceiling, filled in by snapshot()
+  dailyBudgetUsd?: number;
 }
 
 export class LlmUnavailable extends Error {}
@@ -105,16 +111,20 @@ export class LlmGateway {
   get enabled(): boolean { return this.providers.length > 0; }
 
   snapshot(): ProviderStats[] {
-    return [...this.stats.values()].map((s) => ({ ...s, budgetUsd: this.providers.find((p) => p.name === s.name)?.budgetUsd }));
+    return [...this.stats.values()].map((s) => { const cfg = this.providers.find((p) => p.name === s.name); return { ...s, budgetUsd: cfg?.budgetUsd, dailyBudgetUsd: cfg?.dailyBudgetUsd, daySpendUsd: this.daySpend(s) }; });
   }
 
   /** Restore counters (not cooldowns) saved by a previous run. */
   restore(saved: ProviderStats[] | null) {
     for (const s of saved ?? []) {
       const cur = this.stats.get(s.name);
-      if (cur) Object.assign(cur, { calls: s.calls, failures: s.failures, tokensIn: s.tokensIn, tokensOut: s.tokensOut, spendUsd: s.spendUsd, teacherCalls: s.teacherCalls ?? 0, teacherSpendUsd: s.teacherSpendUsd ?? 0 });
+      if (cur) Object.assign(cur, { calls: s.calls, failures: s.failures, tokensIn: s.tokensIn, tokensOut: s.tokensOut, spendUsd: s.spendUsd, teacherCalls: s.teacherCalls ?? 0, teacherSpendUsd: s.teacherSpendUsd ?? 0, dayKey: s.dayKey, daySpendUsd: s.daySpendUsd });
     }
   }
+
+  private dayOf(): number { return Math.floor(this.now() / 86_400_000); }
+  /** What the pets have spent today at this provider: the figure starts again at zero each UTC day. */
+  private daySpend(st: ProviderStats): number { return st.dayKey === this.dayOf() ? st.daySpendUsd ?? 0 : 0; }
 
   private slotsOf(name: string) {
     let s = this.slots.get(name);
@@ -159,6 +169,7 @@ export class LlmGateway {
     const now = this.now();
     if (now < st.cooldownUntil) return `cooling down for ${Math.ceil((st.cooldownUntil - now) / 1000)}s`;
     if (!ignoreBudget && p.budgetUsd !== undefined && st.spendUsd >= p.budgetUsd) return "budget reached";
+    if (!ignoreBudget && p.dailyBudgetUsd && this.daySpend(st) >= p.dailyBudgetUsd) return "daily budget reached";
     const window = this.recent.get(p.name)!.filter((t) => now - t < 60_000);
     this.recent.set(p.name, window);
     if (window.length >= p.rpm) return "client rpm ceiling";
@@ -319,7 +330,11 @@ export class LlmGateway {
     if (opts.account === "teacher") {
       st.teacherCalls++;
       st.teacherSpendUsd += cost;
-    } else st.spendUsd += cost;
+    } else {
+      st.spendUsd += cost;
+      if (st.dayKey !== this.dayOf()) { st.dayKey = this.dayOf(); st.daySpendUsd = 0; }
+      st.daySpendUsd = (st.daySpendUsd ?? 0) + cost;
+    }
     return { text, provider: p.name, model: p.model, tokensIn, tokensOut, cachedIn, costUsd: cost };
   }
 }
@@ -372,6 +387,8 @@ export function gatewayFromEnv(raw: NodeJS.ProcessEnv = process.env): LlmGateway
       priceOutPerM: 1.1,
       rpm: 30,
       budgetUsd: Number(env.DEEPSEEK_BUDGET_USD ?? 1),
+      // A hosted copy is also limited per day (DEEPSEEK_DAILY_BUDGET_USD; 0 = no daily limit), so a forgotten site cannot spend the whole ceiling in a day.
+      ...(Number(env.DEEPSEEK_DAILY_BUDGET_USD ?? (isHosted(env) ? 0.25 : 0)) > 0 ? { dailyBudgetUsd: Number(env.DEEPSEEK_DAILY_BUDGET_USD ?? 0.25) } : {}),
     });
   }
   return new LlmGateway(providers);

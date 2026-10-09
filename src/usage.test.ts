@@ -107,3 +107,56 @@ test("slow thoughts, deep thoughts and replies say what they are for and which p
   await conv.respond(pip, { kind: "human", id: "human", name: "Human", x: 520, y: 300 }, "hello", { kind: "pet", id: "pip" }, "u1");
   assert.deepEqual(talk.tags[0], { kind: "reply", pet: "pip" });
 });
+
+import { LlmUnavailable, gatewayFromEnv } from "./llm.js";
+
+test("a provider with a daily limit refuses the pets once it has spent that today, starts again the next UTC day, and never limits the Teacher", async () => {
+  let now = Date.UTC(2026, 9, 7, 12, 0, 0);
+  const ok = async () => new Response(JSON.stringify({ choices: [{ message: { content: "hi" } }], usage: { prompt_tokens: 1000, completion_tokens: 0 } }), { status: 200, headers: { "content-type": "application/json" } });
+  const g = new LlmGateway([{ name: "p", baseUrl: "http://x", apiKey: "k", model: "m", priceInPerM: 6, priceOutPerM: 0, rpm: 100, budgetUsd: 100, dailyBudgetUsd: 0.01 }], { fetchFn: ok as any, now: () => now }); // each call costs 0.006
+  await g.complete([{ role: "user", content: "a" }]);
+  await g.complete([{ role: "user", content: "b" }]); // 0.012 spent: over
+  await assert.rejects(g.complete([{ role: "user", content: "c" }]), (e: any) => e instanceof LlmUnavailable && /daily budget reached/.test(e.message));
+  await g.complete([{ role: "user", content: "teacher" }], { account: "teacher" }); // the Teacher is not held to it
+  assert.ok(Math.abs(g.snapshot()[0].daySpendUsd! - 0.012) < 1e-9, "the Teacher's call is not counted against the pets' day");
+  now += 24 * 3600_000; // tomorrow
+  await g.complete([{ role: "user", content: "d" }]);
+  assert.ok(Math.abs(g.snapshot()[0].daySpendUsd! - 0.006) < 1e-9, "a new day starts from zero");
+  assert.ok(Math.abs(g.snapshot()[0].spendUsd - 0.018) < 1e-9, "the overall total keeps counting");
+  const saved = JSON.parse(JSON.stringify(g.snapshot()));
+  const again = new LlmGateway([{ name: "p", baseUrl: "http://x", apiKey: "k", model: "m", priceInPerM: 6, priceOutPerM: 0, rpm: 100, dailyBudgetUsd: 0.01 }], { fetchFn: ok as any, now: () => now });
+  again.restore(saved);
+  assert.ok(Math.abs(again.snapshot()[0].daySpendUsd! - 0.006) < 1e-9, "today's spend survives a restart, so a restart cannot reset the limit");
+  await again.complete([{ role: "user", content: "e" }]);
+  await assert.rejects(again.complete([{ role: "user", content: "f" }]), /daily budget reached/);
+});
+
+test("a hosted copy gets a daily limit by default, your own machine does not, and DEEPSEEK_DAILY_BUDGET_USD decides either way", () => {
+  const ds = (env: Record<string, string>) => gatewayFromEnv({ DEEPSEEK_API_KEY: "k", ...env } as any).snapshot().find((p) => p.name === "deepseek")!;
+  assert.equal(ds({ RAILWAY_ENVIRONMENT_NAME: "production" }).dailyBudgetUsd, 0.25);
+  assert.equal(ds({}).dailyBudgetUsd, undefined);
+  assert.equal(ds({ RAILWAY_ENVIRONMENT_NAME: "production", DEEPSEEK_DAILY_BUDGET_USD: "0" }).dailyBudgetUsd, undefined, "0 switches it off");
+  assert.equal(ds({ DEEPSEEK_DAILY_BUDGET_USD: "0.1" }).dailyBudgetUsd, 0.1);
+});
+
+test("routine thoughts can be limited to certain providers, so a busy local model means a skipped thought, not a paid one", async () => {
+  const sim = new Simulation(new World(1), 1, roster);
+  const seen: (string[] | undefined)[] = [];
+  class Spy extends LlmGateway {
+    constructor() { super([{ name: "x", baseUrl: "", apiKey: "", model: "m", priceInPerM: 0, priceOutPerM: 0, rpm: 99 }]); }
+    override async complete(_m: ChatMessage[], o: CompleteOpts = {}): Promise<LlmResult> {
+      seen.push(o.providers);
+      return { text: JSON.stringify({ question: "q", thought: "t", beliefs: [], intention: null, suggestion: "none", say: null, ask_teacher: null }), provider: "x", model: "m", tokensIn: 1, tokensOut: 1 };
+    }
+  }
+  const s2 = new System2(sim, new Spy(), nostore, { intervalSec: 70, deepEvery: 2, isPaused: () => false, routineProviders: ["local"] });
+  await s2.think(sim.pets[0]); // ordinary
+  sim.pets[0].stats.s2Thoughts = 1;
+  await s2.think(sim.pets[0]); // deep
+  assert.deepEqual(seen[0], ["local"]);
+  assert.deepEqual(seen[1], ["deepseek", "groq"], "a deep review still goes to the stronger models");
+  const open = new System2(sim, new Spy(), nostore, { intervalSec: 70, deepEvery: 0, isPaused: () => false });
+  seen.length = 0;
+  await open.think(sim.pets[0]);
+  assert.equal(seen[0], undefined, "with no limit it uses whatever is available, as before");
+});

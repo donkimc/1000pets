@@ -65,6 +65,14 @@ export interface RuleState {
   born: number; // sim seconds when it began watching itself
 }
 
+/** Fill in anything habit state saved by an older version lacks (the step multipliers, the chronic counters, ...), so an old save keeps running. */
+export function repairRules(r: RuleState, nowSec = 0): RuleState {
+  const d = newRules(nowSec) as unknown as Record<string, unknown>, x = r as unknown as Record<string, unknown>;
+  for (const k of Object.keys(d)) if (x[k] === undefined) x[k] = d[k];
+  r.chronic = { ...newRules(nowSec).chronic, ...r.chronic };
+  return r;
+}
+
 export const newRules = (nowSec = 0): RuleState => ({ values: {}, trial: null, history: [], cooldownUntil: 0, unsafeUntil: {}, mult: {}, chronic: { curiosity: 0, social: 0, rest: 0, lowBattery: 0 }, seen: false, born: nowSec });
 
 export type RuleEvent =
@@ -122,7 +130,7 @@ export function refusal(p: Pick<PetState, "rules">, nowSec: number, knob: string
 
 /** Start a trial of a small step on one habit. Returns the event, or null if it was refused (with the reason in `why`). */
 export function proposeTune(p: PetState, nowSec: number, knob: string, dir: string, reason: string, source: Source): { event: RuleEvent | null; why: string | null } {
-  const rules = (p.rules ??= newRules(nowSec));
+  const rules = (p.rules = repairRules(p.rules ?? newRules(nowSec), nowSec));
   const why = refusal(p, nowSec, knob, dir);
   if (why) return { event: null, why };
   const k = knob as KnobName;
@@ -206,7 +214,7 @@ function needProposal(p: Pick<PetState, "rules">, nowSec: number, r: RuleState):
  * learning is enabled and nothing is running, lets an unmet need propose a trial. Returns an event when something happened.
  */
 export function tickRules(p: PetState, nowSec: number, dt: number, enabled: boolean): RuleEvent | null {
-  const r = (p.rules ??= newRules(nowSec));
+  const r = (p.rules = repairRules(p.rules ?? newRules(nowSec), nowSec));
   const alpha = dt / 86400;
   const w = wellbeing(p);
   if (!r.seen) {

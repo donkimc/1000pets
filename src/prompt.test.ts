@@ -143,8 +143,11 @@ test("a pet's situation changes when something real changes, and not for routine
   p.energy = e;
   p.mind.episodes.push("D1 10:00 nothing pressing, wandering (light 3, battery 44%)");
   assert.equal(situation(p, "living", 1), base, "routine idling is not news");
-  p.mind.episodes.push("D1 10:01 bumped into another pet");
-  assert.notEqual(situation(p, "living", 1), base, "a real event is");
+  p.s1.action = p.s1.action === "wander" ? "avoid" : "wander"; p.mind.sensed.touch = "wall"; p.mode = p.mode === "moving" ? "idle" : "moving";
+  assert.equal(situation(p, "living", 1), base, "turning, bumping and stopping to pause flicker every few seconds, so they are not news");
+  p.mode = "sleeping";
+  assert.notEqual(situation(p, "living", 1), base, "falling asleep is");
+  p.mode = "idle";
   const after = situation(p, "living", 1);
   p.mind.scenes.push(scene("z", sim.simSec + 10));
   assert.notEqual(situation(p, "living", 1), after, "a new memory");
