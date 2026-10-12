@@ -28,6 +28,7 @@ import { Conversation } from "./conversation.js";
 import type { Target } from "./speech.js";
 import { readdir, stat } from "node:fs/promises";
 import { OVERRIDE_FIELDS, ROOM_FIELDS, World, type WorldSnapshot } from "./world.js";
+import { routeSettings } from "./route.js";
 import { LAYOUTS, HOUSE } from "./layout.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -169,6 +170,7 @@ async function loadSession() {
   // A new run lives in the house. A run saved in the old single room stays there, unless LAYOUT=house moves it into the house.
   const layout = LAYOUTS[process.env.LAYOUT ?? savedWorld?.layoutId ?? (savedWorld ? "legacy" : "house")] ?? HOUSE;
   world = new World(SEED, savedWorld ?? undefined, layout);
+  routeSettings.on = process.env.ROUTE_MEMORY ? process.env.ROUTE_MEMORY === "on" : layout.rooms.some((r) => r.puzzle); // remembering the way out of a passage: on by default only where there are puzzle rooms
   sim = new Simulation(world, SEED, defaultRoster, savedSim ?? undefined);
   if (savedSim?.ruleLearning === undefined) sim.ruleLearning = process.env.RULE_LEARNING === "on"; // off unless switched on; a save remembers its own setting
   // Routine thoughts go to the local model if there is one, and are skipped (not sent to a paid model) when it is busy; S2_ROUTINE_PROVIDERS (comma list, e.g. "groq,deepseek") overrides.
@@ -212,7 +214,7 @@ function roomsView() {
   return world.layout.rooms.map((r) => ({ id: r.id, name: r.name, ...world.roomEnv(r.id), pinned: r.id === world.primaryRoom ? Object.keys(world.overrides).filter((f) => (ROOM_FIELDS as readonly string[]).includes(f)) : Object.keys(world.snap.roomOverrides?.[r.id] ?? {}) }));
 }
 function doorsView() {
-  return world.layout.doors.map((d) => ({ id: d.id, a: d.a, b: d.b, open: world.isDoorOpen(d.id), locked: world.isLocked(d.id) }));
+  return world.layout.doors.map((d) => ({ id: d.id, a: d.a, b: d.b, open: world.isDoorOpen(d.id), locked: world.isLocked(d.id), oneWay: d.oneWay?.from, emergency: !!d.emergency }));
 }
 
 function worldView() {

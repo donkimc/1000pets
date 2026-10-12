@@ -14,7 +14,8 @@
     "test": "tsx --test src/*.test.ts",
     "build:css": "tailwindcss -i src/styles.css -o public/app.css --minify",
     "bench:model": "tsx scripts/bench-local-model.ts",
-    "bench:cost": "tsx scripts/cost-bench.ts"
+    "bench:cost": "tsx scripts/cost-bench.ts",
+    "report:ntfy": "tsx --env-file-if-exists=.env.local scripts/ntfy-report.ts"
   },
   "dependencies": {
     "express": "^4.21.2",

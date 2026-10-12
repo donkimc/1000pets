@@ -1,7 +1,7 @@
 // How sight and sound get around walls. A wall stops sight; a wall or shut door muffles sound a lot but not entirely;
 // and sound finds its way through an open doorway, so a pet that hears a charger in the next room hears it coming
 // from the door. These are physical facts about the world, used by the sensors: a pet only ever receives the result.
-import { blockedAt, centerOf, chargersOf, pointInRect, type Layout, type RoomObject } from "./layout.js";
+import { blockedAt, centerOf, chargersOf, pointInRect, wallAt, type Layout, type RoomObject } from "./layout.js";
 
 export interface Pt { x: number; y: number }
 export const WALL_MUFFLE = 0.35; // loudness left after sound passes through one wall or shut door
@@ -12,12 +12,12 @@ const SHUT_DETOUR = 300; // a shut door adds this much to how far a sound seems 
 export function crossings(layout: Layout, a: Pt, b: Pt, shut: readonly string[] = []): number {
   const d = Math.hypot(b.x - a.x, b.y - a.y);
   const n = Math.max(1, Math.ceil(d / 6));
-  const rects = [...layout.walls, ...shut.map((id) => layout.doorRects[id]).filter(Boolean)];
-  if (!rects.length) return 0;
+  const doors = shut.map((id) => layout.doorRects[id]).filter(Boolean);
+  if (!layout.walls.length && !doors.length) return 0;
   let count = 0, inside = false;
   for (let i = 0; i <= n; i++) {
     const x = a.x + ((b.x - a.x) * i) / n, y = a.y + ((b.y - a.y) * i) / n;
-    const now = rects.some((r) => pointInRect(x, y, r));
+    const now = wallAt(layout, x, y) || doors.some((r) => pointInRect(x, y, r));
     if (now && !inside) count++;
     inside = now;
   }

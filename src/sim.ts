@@ -11,6 +11,8 @@ import { repairRules, tickRules, type RuleEvent } from "./rules.js";
 import { describeTone, toneKey, updateCues } from "./cues.js";
 import { observeOthers } from "./relations.js";
 import { observePlaces, repairPlaces } from "./places.js";
+import { noteTread } from "./explore.js";
+import { noteRoute } from "./route.js";
 import { sleepTick, type SleepSummary } from "./sleep.js";
 import { addDream, makeDream, type Dream } from "./dreams.js";
 import { cleanBeliefs } from "./system2.js";
@@ -273,6 +275,8 @@ export class Simulation {
     updateOdometry(p, DT, rng);
     closeLoop(p, obs);
     observePlaces(p, obs, this.simSec, !!p.enteredDoorway);
+    noteTread(p);
+    noteRoute(p, obs, this.simSec, !!p.enteredDoorway);
     p.enteredDoorway = false;
     const surprises = [...updateCues(p, obs, this.simSec, DT), ...updatePredictions(p, obs, this.simSec)];
     for (const sur of surprises) captureSurpriseScene(p, obs, this.simSec, rng, sur); // a broken expectation is worth remembering
@@ -347,7 +351,7 @@ export class Simulation {
         if (d < 60 && (!nearest || d < nearest.d)) nearest = { id, d };
       }
       if (nearest) {
-        const res = this.world.openDoor(nearest.id, this.simSec);
+        const res = this.world.openDoor(nearest.id, this.simSec, 120, this.world.roomIdAt(p.x, p.y)); // (a pet is held to a one-way door's rule)
         if (res === "opened") p.stats.doorsOpened!++;
         this.note(p, res === "locked" ? "pushed a shut door but it would not open" : "pushed a door open");
       }
@@ -359,7 +363,8 @@ export class Simulation {
     p.turnRate = turn / DT;
     p.bumped = false;
     p.touch = null;
-    let moved = 0;
+    let moved = 0, crossed = false;
+    const trace: { x: number; y: number }[] = [];
     const startX = p.x, startY = p.y;
     const dist = WALK_SPEED * clamp(dec.forward, 0, 1) * DT;
     const steps = Math.ceil(dist / 6);
@@ -379,6 +384,7 @@ export class Simulation {
             p.x = sx;
             p.y = sy;
             moved += step;
+            trace.push({ x: p.x - startX, y: p.y - startY });
             slid = true;
             break;
           }
@@ -389,8 +395,13 @@ export class Simulation {
       p.x = nx;
       p.y = ny;
       moved += step;
+      trace.push({ x: p.x - startX, y: p.y - startY });
+      // (a tick covers up to 150 units, so a doorway can be crossed between two ticks: it is felt on the way)
+      if (!p.inDoorway && !crossed && Object.values(this.world.layout.doorRects).some((r) => nx > r.x - 8 && nx < r.x + r.w + 8 && ny > r.y - 8 && ny < r.y + r.h + 8)) crossed = true;
     }
+    if (crossed) p.enteredDoorway = true;
     p.speed = moved / DT;
+    p.moveTrace = trace;
     p.moved = { x: p.x - startX, y: p.y - startY };
 
     // Charger pad contact is a touch the pet can feel.
@@ -419,7 +430,8 @@ export class Simulation {
     const here = this.world.roomIdAt(p.x, p.y);
     p.stats.roomSec![here] = (p.stats.roomSec![here] ?? 0) + DT;
     if (p.mode === "charging" || p.chargeRate > 0.5) p.stats.chargeSec![here] = (p.stats.chargeSec![here] ?? 0) + DT;
-    if (p.room && p.room !== here) p.stats.crossings!++;
+    if (p.room && p.room !== here) { p.stats.crossings!++; p.roomSince = this.simSec; }
+    if (p.roomSince === undefined) p.roomSince = this.simSec;
     p.room = here;
 
     const tod = obs.timeOfDay;

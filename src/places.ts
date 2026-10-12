@@ -55,12 +55,15 @@ export interface PlaceMap {
   seq: number;
   padSince?: number; // when it stepped on the pad it is on now
   chargedHere?: boolean;
+  tread?: Record<string, number>; // how often it has stepped onto each patch of ground (see explore.ts)
+  treadCell?: string;
+  passage?: import("./route.js").Passage; // the track since it came into a passage, and the ways out it remembers (see route.ts)
 }
 
 export const newPlaces = (): PlaceMap => ({ nodes: {}, edges: [], last: null, lastSec: 0, travel: 0, trail: [], route: null, avoid: {}, seq: 0 });
 /** Fill in anything a map saved by an older version lacks (the breadcrumbs and a run's turns came later), so an old save keeps running. */
 export function repairPlaces(pm: PlaceMap): PlaceMap {
-  pm.nodes ??= {}; pm.edges ??= []; pm.avoid ??= {}; pm.trail ??= []; pm.travel ??= 0; pm.seq ??= 0; pm.last ??= null; pm.lastSec ??= 0; pm.route ??= null;
+  pm.nodes ??= {}; pm.edges ??= []; pm.avoid ??= {}; pm.trail ??= []; pm.travel ??= 0; pm.seq ??= 0; pm.last ??= null; pm.lastSec ??= 0; pm.route ??= null; pm.tread ??= {};
   for (const e of pm.edges) e.via ??= [];
   if (pm.route && (!Array.isArray(pm.route.wps) || !Array.isArray(pm.route.path))) pm.route = null; // a route planned by an older version: plan again
   return pm;

@@ -89,7 +89,7 @@
       el("env-doors").classList.remove("hidden");
       el("env-doors").innerHTML = `<div class="text-xs uppercase tracking-wider text-mute mb-1">Doors <span class="normal-case">(pets open any door that is not locked)</span></div>` + doors.map((d) => {
         const name = (id) => (cur.rooms.find((r) => r.id === id) || { name: id }).name;
-        return `<div class="flex items-center gap-2 text-sm"><span class="flex-1">${esc(name(d.a))} ↔ ${esc(name(d.b))}</span><span class="text-xs ${d.locked ? "text-amber-300" : "text-mute"}">${d.locked ? "locked" : d.open ? "open" : "shut"}</span><button data-lock="${d.id}" data-to="${d.locked ? "false" : "true"}" class="${BTN}">${d.locked ? "Unlock" : "Lock"}</button></div>`;
+        return `<div class="flex items-center gap-2 text-sm"><span class="flex-1">${esc(name(d.a))} ${d.oneWay ? "→" : "↔"} ${esc(name(d.b))}${d.emergency ? " <span class=\"text-xs text-mute\">(emergency exit, the Teacher uses it)</span>" : d.oneWay ? " <span class=\"text-xs text-mute\">(one way)</span>" : ""}</span><span class="text-xs ${d.locked ? "text-amber-300" : "text-mute"}">${d.locked ? "locked" : d.open ? "open" : "shut"}</span><button data-lock="${d.id}" data-to="${d.locked ? "false" : "true"}" class="${BTN}">${d.locked ? "Unlock" : "Lock"}</button></div>`;
       }).join("");
       el("env-doors").onclick = async (e) => { const b = e.target.closest("[data-lock]"); if (!b) return; try { await api("POST", "/api/env", { field: "doorLocked", door: b.dataset.lock, value: b.dataset.to === "true" }); await loadEnv(); } catch (err) { el("env-note").textContent = err.message; } };
     }

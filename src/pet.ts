@@ -41,6 +41,9 @@ export interface S1State {
   doorGoalUntil?: number; // heading for a doorway on purpose until then
   doorCooldownUntil?: number; // not curious about doorways again before this
   passUntil?: number; // walking straight through a doorway until then
+  guideSeen?: { at: number; bearing: number }; // where the Teacher was last seen, while being led
+  exploreUntil?: number; // keeping to a passage (exploring by what it has trodden least) until then
+  guidedUntil?: number; // being led (by the Teacher, out of a maze): follow the nearest moving thing in sight until then
 }
 
 export interface PetState {
@@ -62,7 +65,9 @@ export interface PetState {
   enteredDoorway?: boolean; // set for one tick when it steps into a doorway
   anchors?: Record<string, { x: number; y: number }>; // where it reckoned each charger pad to be (by its hum), to correct drift
   room?: string; // the room it was in at the last tick (to count crossings)
+  roomSince?: number; // since when (simulated seconds) it has been in that room
   inDoorway?: boolean; // standing in a doorway right now (to note each passing once)
+  moveTrace?: { x: number; y: number }[]; // where it was along the way this tick, relative to where it started (what its odometry could have read in between); used and cleared within the tick
   moved?: { x: number; y: number }; // how far the body actually moved in the last tick (what its odometry measures)
   touch: "wall" | "door" | "object" | "pet" | "human" | "teacher" | "pad" | null;
   chargeRate: number; // %/min being taken in right now (solar or charger)

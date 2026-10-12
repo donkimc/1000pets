@@ -3,7 +3,7 @@
 import { clamp, normAngle } from "./geometry.js";
 import { HUMAN_RADIUS, PET_RADIUS, TEACHER_RADIUS, hueOf, type HumanState, type PetState } from "./pet.js";
 import { Rng } from "./rng.js";
-import { LEGACY, centerOf, circleHitsShape, pointInRect, pointInShape, shapeOf, type Layout } from "./layout.js";
+import { LEGACY, centerOf, circleHitsShape, pointInRect, pointInShape, shapeOf, wallAt, type Layout } from "./layout.js";
 import { WALL_MUFFLE, crossings } from "./acoustics.js";
 import type { World } from "./world.js";
 
@@ -74,7 +74,7 @@ export function rayDistance(x: number, y: number, angle: number, others: Other[]
   for (let d = 4; d <= max; d += 6) {
     const px = x + cx * d, py = y + cy * d;
     if (px < 0 || py < 0 || px > layout.width || py > layout.height) return d;
-    if (layout.walls.some((w) => pointInRect(px, py, w))) return d;
+    if (wallAt(layout, px, py)) return d;
     if (shut.some((id) => layout.doorRects[id] && pointInRect(px, py, layout.doorRects[id]))) return d;
     if (layout.solids.some((s) => pointInShape(px, py, s))) return d;
     // Another body blocks the pet's own body at two radii, so the ray must see it that wide, or the pet believes the way is clear while it is not.
@@ -238,7 +238,7 @@ export function egoGrid(p: Pick<PetState, "x" | "y" | "heading">, layout: Layout
         if (x < 0 || y < 0 || x > layout.width || y > layout.height) c = "#";
         else if (Object.entries(layout.doorRects).some(([id, r]) => shut.includes(id) && pointInRect(x, y, r))) c = "D";
         else if (Object.values(layout.doorRects).some((r) => pointInRect(x, y, r))) c = ":";
-        else if (layout.walls.some((w) => pointInRect(x, y, w))) c = "#";
+        else if (wallAt(layout, x, y)) c = "#";
         else if (layout.solids.some((s) => pointInShape(x, y, s))) c = "o";
         else if (bodies.some((b) => Math.hypot(b.x - x, b.y - y) < GRID_CELL / 2)) c = "@";
         if (rank.indexOf(c) < rank.indexOf(ch)) ch = c;

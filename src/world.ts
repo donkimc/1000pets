@@ -134,9 +134,14 @@ export class World {
         };
     this.snap.overrides ??= {};
     this.snap.env.beaconOn ??= true; // saves from before the beacon
+    const previousLayout = this.snap.layoutId;
     this.snap.layoutId = layout.id;
     this.snap.doors ??= {};
     this.snap.locked ??= [];
+    // A brand-new world, or a save from another floor plan, has never seen this plan's emergency doors, so they start locked.
+    if (!snapshot || previousLayout !== layout.id) {
+      for (const d of layout.doors) if (d.emergency && !this.snap.locked.includes(d.id)) this.snap.locked.push(d.id);
+    }
     this.snap.rooms ??= {};
     this.snap.roomOverrides ??= {};
     for (const r of layout.rooms.slice(1)) this.snap.rooms[r.id] ??= { indoorTemp: this.snap.env.indoorTemp, heaterOn: false, lampOn: false, curtainOpen: false };
@@ -316,9 +321,15 @@ export class World {
   shutDoors(): string[] { return this.layout.doors.filter((d) => !this.isDoorOpen(d.id)).map((d) => d.id); }
 
   /** Someone opens a door. It stays open for `holdSec`, then closes by itself once nobody is in the way. */
-  openDoor(id: string, nowSec: number, holdSec = 120): "opened" | "already" | "locked" | "unknown" {
+  openDoor(id: string, nowSec: number, holdSec = 120, byRoom?: string): "opened" | "already" | "locked" | "unknown" {
     if (!this.layout.doorRects[id]) return "unknown";
     if (this.isLocked(id)) return "locked";
+    const def = this.layout.doors.find((d) => d.id === id);
+    // A one-way door only opens for someone standing on its near side (`byRoom`; a person or the Teacher gives none), and swings shut soon after.
+    if (def?.oneWay) {
+      if (byRoom !== undefined && byRoom !== def.oneWay.from) return "locked";
+      if (byRoom !== undefined) holdSec = Math.min(holdSec, 8);
+    }
     const d = (this.snap.doors![id] ??= { open: false, closeAtSec: 0 });
     const was = d.open;
     d.open = true;

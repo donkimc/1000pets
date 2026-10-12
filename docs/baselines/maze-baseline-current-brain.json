@@ -1,0 +1,90 @@
+{
+  "door": "shut",
+  "minutes": 120,
+  "report": [
+    {
+      "size": "5x4",
+      "mazes": 10,
+      "trials": 3,
+      "byTrial": [
+        {
+          "trial": 1,
+          "solved": 10,
+          "of": 10,
+          "medianMin": 11.5,
+          "medianPathRatio": 7.4174999999999995
+        },
+        {
+          "trial": 2,
+          "solved": 10,
+          "of": 10,
+          "medianMin": 5.416666666666667,
+          "medianPathRatio": 1.672
+        },
+        {
+          "trial": 3,
+          "solved": 10,
+          "of": 10,
+          "medianMin": 12.833333333333334,
+          "medianPathRatio": 5.188124999999999
+        }
+      ]
+    },
+    {
+      "size": "8x6",
+      "mazes": 10,
+      "trials": 3,
+      "byTrial": [
+        {
+          "trial": 1,
+          "solved": 10,
+          "of": 10,
+          "medianMin": 25.833333333333332,
+          "medianPathRatio": 4.8136363636363635
+        },
+        {
+          "trial": 2,
+          "solved": 10,
+          "of": 10,
+          "medianMin": 43.75,
+          "medianPathRatio": 9.727619047619047
+        },
+        {
+          "trial": 3,
+          "solved": 8,
+          "of": 10,
+          "medianMin": 24.833333333333332,
+          "medianPathRatio": 4.558695652173913
+        }
+      ]
+    },
+    {
+      "size": "10x7",
+      "mazes": 10,
+      "trials": 3,
+      "byTrial": [
+        {
+          "trial": 1,
+          "solved": 9,
+          "of": 10,
+          "medianMin": 24.833333333333332,
+          "medianPathRatio": 4.486666666666666
+        },
+        {
+          "trial": 2,
+          "solved": 5,
+          "of": 10,
+          "medianMin": 29.75,
+          "medianPathRatio": 5.687777777777777
+        },
+        {
+          "trial": 3,
+          "solved": 7,
+          "of": 10,
+          "medianMin": 36.166666666666664,
+          "medianPathRatio": 7.4988636363636365
+        }
+      ]
+    }
+  ]
+}

@@ -7,11 +7,13 @@ import type { Observation } from "./sensors.js";
 import { cueFor, cueTrust, novelty, startGoal } from "./cues.js";
 import { pickCompany } from "./relations.js";
 import { placeSteer } from "./places.js";
+import { exploreSteer } from "./explore.js";
+import { routeSteer } from "./route.js";
 import { ruleValue, type KnobName } from "./rules.js";
 
 export type Action =
   | "dormant" | "avoid" | "sleep" | "charge" | "seek_light"
-  | "approach_pet" | "socialize" | "approach_object" | "inspect" | "follow_tone" | "wander" | "pause" | "explore_door" | "open_door" | "go_to_place";
+  | "approach_pet" | "socialize" | "approach_object" | "inspect" | "follow_tone" | "wander" | "pause" | "explore_door" | "open_door" | "go_to_place" | "follow_guide";
 
 export interface Decision {
   action: Action;
@@ -102,6 +104,19 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
   // Through a doorway: carry straight on, whatever the pet was steering toward, until it is well past.
   if (nowSec < (s1.passUntil ?? 0)) return { action: "explore_door", reason: "going through the doorway", forward: 0.8, turn: 0 };
 
+  // Being led out of somewhere (the Teacher said "follow me"): keep to the nearest moving thing in sight, and look for it if it is lost.
+  if (nowSec < (s1.guidedUntil ?? 0)) {
+    const lead = obs.vision.find((v) => v.category === "moving");
+    if (lead) {
+      s1.guideSeen = { at: nowSec, bearing: lead.bearing };
+      return lead.distance > 70 ? { action: "follow_guide", reason: "following the Teacher out", forward: 0.8, turn: clamp(lead.bearing, -MAX_TURN, MAX_TURN) } : stay("follow_guide", "waiting for the Teacher to go on");
+    }
+    // Lost it, most likely round a corner: carry on the way it was last seen going for a few seconds, then look about.
+    const last = s1.guideSeen;
+    if (last && nowSec - last.at < 8) return { action: "follow_guide", reason: "going on where the Teacher was last seen", forward: 0.6, turn: clamp(last.bearing, -MAX_TURN, MAX_TURN) * 0.5 };
+    return { action: "follow_guide", reason: "looking for the Teacher", forward: 0.1, turn: 0.6 };
+  }
+
   const needEnergy = 1 - obs.energy / 100;
 
   // 4. Sleepy, and the battery is not critical.
@@ -174,6 +189,10 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
     s1.holdAction = "pause";
     return stay("pause", "stopping for a moment");
   }
+  const rt = routeSteer(p, nowSec);
+  if (rt) return { action: "wander", reason: rt.reason, forward: rt.forward, turn: rt.turn };
+  const ex = exploreSteer(p, obs, nowSec);
+  if (ex) return { action: "wander", reason: ex.reason, forward: ex.forward, turn: ex.turn };
   return { action: "wander", reason: "nothing pressing, wandering", forward: 0.6, turn: (rng.next() - 0.5) * 0.5 };
 }
 

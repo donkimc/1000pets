@@ -1,0 +1,34 @@
+{
+  "door": "shut",
+  "minutes": 120,
+  "report": [
+    {
+      "size": "10x7",
+      "mazes": 10,
+      "trials": 3,
+      "byTrial": [
+        {
+          "trial": 1,
+          "solved": 9,
+          "of": 10,
+          "medianMin": 24.833333333333332,
+          "medianPathRatio": 4.486666666666666
+        },
+        {
+          "trial": 2,
+          "solved": 9,
+          "of": 10,
+          "medianMin": 10.166666666666666,
+          "medianPathRatio": 1.8027083333333331
+        },
+        {
+          "trial": 3,
+          "solved": 9,
+          "of": 10,
+          "medianMin": 11.25,
+          "medianPathRatio": 1.9000000000000001
+        }
+      ]
+    }
+  ]
+}

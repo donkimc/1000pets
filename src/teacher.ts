@@ -13,6 +13,7 @@ import { looksLikeJson, type Target, type Utterance } from "./speech.js";
 import type { Store } from "./store.js";
 import { buildNotes, buildNotesCompact, promptSettings, type TeacherHook } from "./system2.js";
 import { OVERRIDE_FIELDS, ROOM_FIELDS, parseOverride } from "./world.js";
+import { Rescue } from "./rescue.js";
 import { LEGACY, blockedAt, centerOf, objectById, type Layout } from "./layout.js";
 
 // ---------- types ----------
@@ -259,7 +260,14 @@ export class Teacher implements TeacherHook {
     this.cfg = { ...DEFAULT_TEACHER_CONFIG, ...cfg };
     this.state = state ? { ...newTeacherState(seed), ...state, stats: { ...newTeacherState(seed).stats, ...state.stats } } : newTeacherState(seed);
     this.rng = new Rng(this.state.rngState);
+    this.rescue = new Rescue(sim, {
+      setLocked: (door, locked, reason) => { void this.env.set("doorLocked", locked, "teacher", reason, { door }).catch(() => {}); },
+      say: (pet, text) => { void this.speech.teacherSays({ kind: "pet", id: pet.id }, text, { kind: "rescue" }).catch(() => {}); },
+    });
   }
+
+  /** Getting pets out of puzzle rooms when they have been stuck too long (see rescue.ts): by rule, so it does not depend on a model. */
+  readonly rescue: Rescue;
 
   private now() { return this.cfg.now ? this.cfg.now() : Date.now(); }
   private nowMin() { return Math.floor(this.sim.simSec / 60); }
@@ -333,6 +341,8 @@ export class Teacher implements TeacherHook {
     if (this.disposed) return;
     const s = this.state;
     if (!s.enabled || this.cfg.isPaused()) return;
+    const rescueGoal = this.rescue.tick(); // a pet is stuck in a maze: that comes before everything else the Teacher had planned
+    if (rescueGoal !== undefined) { this.sim.teacherGoal = rescueGoal; return; }
     this.steer();
     if (this.job) return;
     const real = this.now();
@@ -509,6 +519,8 @@ export class Teacher implements TeacherHook {
     if (this.state.observations.length) lines.push(`What you noticed while watching: ${this.state.observations.slice(-8).join(" | ")}.`);
     const wrong = this.sim.pets.flatMap((pet) => pet.mind.claims.filter((c) => c.status === "contradicted" && /^the Teacher/i.test(c.from)).map((c) => `${pet.name}: "${c.text}" (${c.why ?? "their own experience disagreed"})`));
     if (wrong.length) lines.push(`Things you told the pets that their OWN experience has shown to be wrong: ${wrong.join(" | ")}.`);
+    const stuck = this.rescue.trapped();
+    if (stuck.length) lines.push(`Pets inside puzzle rooms (mazes with no charger; they must find their own way out, and you can open the locked emergency door to let one out): ${stuck.map((t) => `${t.pet.name} in the ${t.roomId} for ${t.minutes} min, battery ${Math.round(t.pet.energy)}%`).join("; ")}. You will go and lead one out yourself if it stays inside ${this.rescue.cfg.afterMin} minutes or its battery drops under ${this.rescue.cfg.batteryBelow}%.`);
     const open = this.state.questions.filter((q) => q.status === "pending");
     if (open.length) lines.push(`Questions from pets still waiting: ${open.map((q) => `${q.petId}: ${q.text}`).join(" | ")}.`);
     return lines.join("\n");

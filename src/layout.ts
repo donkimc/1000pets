@@ -18,12 +18,16 @@ export type Shape =
 export interface Rect { x: number; y: number; w: number; h: number }
 
 export type Floor = "wood" | "tile" | "carpet" | "stone";
-export interface RoomDef { id: string; name: string; x: number; y: number; w: number; h: number; floor: Floor }
+export interface RoomDef { id: string; name: string; x: number; y: number; w: number; h: number; floor: Floor; puzzle?: boolean } // puzzle: a maze room, with no charger, that pets must find their own way out of
 
 /** A door between two rooms, set into the wall along `line` (a fixed x for a vertical wall, a fixed y for a horizontal one), centred at `at`. */
-export interface DoorDef { id: string; a: string; b: string; orient: "v" | "h"; line: number; at: number; width: number }
+export interface DoorDef {
+  id: string; a: string; b: string; orient: "v" | "h"; line: number; at: number; width: number;
+  oneWay?: { from: string }; // pets can only open it from this room: once through, they cannot open it again from the other side (a person or the Teacher can)
+  emergency?: boolean; // starts locked; only the Teacher opens it, to let a trapped pet out
+}
 
-export interface LayoutSpec { id: string; width: number; height: number; rooms: RoomDef[]; doors: DoorDef[]; objects: RoomObject[] }
+export interface LayoutSpec { id: string; width: number; height: number; rooms: RoomDef[]; doors: DoorDef[]; objects: RoomObject[]; extraWalls?: Rect[] } // extraWalls: walls inside rooms, such as a maze
 
 export interface Layout extends LayoutSpec {
   walls: Rect[]; // interior walls, with a gap at every door
@@ -111,6 +115,7 @@ export function buildLayout(spec: LayoutSpec): Layout {
       ? { x: d.line - WALL_T / 2, y: d.at - d.width / 2, w: WALL_T, h: d.width }
       : { x: d.at - d.width / 2, y: d.line - WALL_T / 2, w: d.width, h: WALL_T };
   }
+  walls.push(...(spec.extraWalls ?? []).map((w) => ({ ...w })));
   const solids = spec.objects.filter((o) => SOLID_KINDS.includes(o.kind)).map(shapeOf);
   return { ...spec, walls, doorRects, solids };
 }
@@ -119,10 +124,39 @@ export function roomAt(layout: Pick<Layout, "rooms">, x: number, y: number): Roo
   return layout.rooms.find((r) => x >= r.x && x < r.x + r.w && y >= r.y && y < r.y + r.h) ?? null;
 }
 
+// ---- finding walls quickly: a maze has hundreds of them, and sight, sound and movement ask about walls many times a tick ----
+const CELL = 100;
+class WallIndex {
+  private buckets = new Map<number, number[]>();
+  constructor(private walls: readonly Rect[]) {
+    walls.forEach((w, i) => {
+      for (let cx = Math.floor(w.x / CELL); cx <= Math.floor((w.x + w.w) / CELL); cx++) for (let cy = Math.floor(w.y / CELL); cy <= Math.floor((w.y + w.h) / CELL); cy++) {
+        const k = (cx + 64) * 4096 + (cy + 64);
+        (this.buckets.get(k) ?? this.buckets.set(k, []).get(k)!).push(i);
+      }
+    });
+  }
+  /** The walls that could be within `r` of this point. */
+  near(x: number, y: number, r: number): Rect[] {
+    const out: Rect[] = [], seen = new Set<number>();
+    for (let cx = Math.floor((x - r) / CELL); cx <= Math.floor((x + r) / CELL); cx++) for (let cy = Math.floor((y - r) / CELL); cy <= Math.floor((y + r) / CELL); cy++) {
+      for (const i of this.buckets.get((cx + 64) * 4096 + (cy + 64)) ?? []) if (!seen.has(i)) { seen.add(i); out.push(this.walls[i]); }
+    }
+    return out;
+  }
+}
+const indexes = new WeakMap<readonly Rect[], WallIndex>();
+const indexOf = (layout: Pick<Layout, "walls">) => { let i = indexes.get(layout.walls); if (!i) indexes.set(layout.walls, (i = new WallIndex(layout.walls))); return i; };
+
+/** The walls within `r` of a point (a short list, whatever the size of the house). */
+export const wallsNear = (layout: Pick<Layout, "walls">, x: number, y: number, r: number): Rect[] => indexOf(layout).near(x, y, r);
+/** Is this point inside a wall? */
+export const wallAt = (layout: Pick<Layout, "walls">, x: number, y: number): boolean => indexOf(layout).near(x, y, 0).some((w) => pointInRect(x, y, w));
+
 /** What stops a body of radius `r` at (x, y), if anything: the edge of the house or a wall, a shut door, or furniture. `shut` lists the doors that are closed. */
 export function blockedAt(layout: Layout, x: number, y: number, r: number, shut: ReadonlySet<string> | readonly string[] = []): "wall" | "door" | "object" | null {
   if (x < r || y < r || x > layout.width - r || y > layout.height - r) return "wall";
-  for (const w of layout.walls) if (circleHitsRect(x, y, r, w)) return "wall";
+  for (const w of wallsNear(layout, x, y, r)) if (circleHitsRect(x, y, r, w)) return "wall";
   for (const id of shut) { const d = layout.doorRects[id]; if (d && circleHitsRect(x, y, r, d)) return "door"; }
   for (const s of layout.solids) if (circleHitsShape(x, y, r, s)) return "object";
   return null;
@@ -210,4 +244,116 @@ export const HOUSE: Layout = buildLayout({
   ],
 });
 
-export const LAYOUTS: Record<string, Layout> = { legacy: LEGACY, house: HOUSE };
+// ---- mazes: a room whose floor is a set of corridors, and a way out that must be found ----
+export type Side = "top" | "bottom" | "left" | "right";
+export interface MazeSpec {
+  x: number; y: number; cols: number; rows: number; cell?: number; // the area it fills, in cells of `cell` units (100: a corridor is a cell wide, less the wall)
+  seed: number; minRoute?: number; // a perfect maze (one way between any two cells); reseeded until the way through is at least minRoute cells
+  entrance: { side: Side; index: number }; exit: { side: Side; index: number }; // which cell along a side of the area
+}
+export interface Maze { walls: Rect[]; cols: number; rows: number; cell: number; entrance: number; exit: number; route: number[]; passages: [number, number][] }
+
+/** Where a door sits on the edge of the maze area for a given cell along that side. */
+export function mazeDoor(spec: Pick<MazeSpec, "x" | "y" | "cols" | "rows" | "cell">, at: { side: Side; index: number }): { orient: "v" | "h"; line: number; at: number } {
+  const cell = spec.cell ?? 100;
+  if (at.side === "top") return { orient: "h", line: spec.y, at: spec.x + at.index * cell + cell / 2 };
+  if (at.side === "bottom") return { orient: "h", line: spec.y + spec.rows * cell, at: spec.x + at.index * cell + cell / 2 };
+  if (at.side === "left") return { orient: "v", line: spec.x, at: spec.y + at.index * cell + cell / 2 };
+  return { orient: "v", line: spec.x + spec.cols * cell, at: spec.y + at.index * cell + cell / 2 };
+}
+const cellAt = (spec: Pick<MazeSpec, "cols" | "rows">, a: { side: Side; index: number }) => (a.side === "top" ? a.index : a.side === "bottom" ? (spec.rows - 1) * spec.cols + a.index : a.side === "left" ? a.index * spec.cols : a.index * spec.cols + spec.cols - 1);
+
+export function makeMaze(spec: MazeSpec): Maze {
+  const cell = spec.cell ?? 100, { cols, rows } = spec;
+  const entrance = cellAt(spec, spec.entrance), exit = cellAt(spec, spec.exit);
+  for (let attempt = 0; attempt < 400; attempt++) {
+    let s = (spec.seed + attempt * 7919) * 2654435761 % 2147483647 || 1;
+    const rnd = () => { s = (s * 16807) % 2147483647; return s / 2147483647; };
+    const seen = new Set<number>([0]), stack = [0], passages: [number, number][] = [];
+    while (stack.length) {
+      const u = stack[stack.length - 1], c = u % cols, r = Math.floor(u / cols);
+      const next = [[c + 1, r], [c - 1, r], [c, r + 1], [c, r - 1]].filter(([x, y]) => x >= 0 && y >= 0 && x < cols && y < rows && !seen.has(y * cols + x));
+      if (!next.length) { stack.pop(); continue; }
+      const [x, y] = next[Math.floor(rnd() * next.length)], v = y * cols + x;
+      seen.add(v); stack.push(v); passages.push(u < v ? [u, v] : [v, u]);
+    }
+    const open = new Set(passages.map(([a, b]) => `${a}-${b}`));
+    // the way through: the one route from the entrance cell to the exit cell
+    const adj = new Map<number, number[]>();
+    for (const [a, b] of passages) { (adj.get(a) ?? adj.set(a, []).get(a)!).push(b); (adj.get(b) ?? adj.set(b, []).get(b)!).push(a); }
+    const prev = new Map<number, number>([[entrance, -1]]), q = [entrance];
+    while (q.length) { const u = q.shift()!; for (const v of adj.get(u) ?? []) if (!prev.has(v)) { prev.set(v, u); q.push(v); } }
+    const route: number[] = [];
+    for (let u = exit; u !== -1; u = prev.get(u)!) route.unshift(u);
+    if (route.length < (spec.minRoute ?? 0) && attempt < 399) continue;
+    const walls: Rect[] = [], T = WALL_T;
+    for (let r = 0; r < rows; r++) for (let c = 0; c < cols; c++) {
+      const u = r * cols + c;
+      if (c + 1 < cols && !open.has(`${u}-${u + 1}`)) walls.push({ x: spec.x + (c + 1) * cell - T / 2, y: spec.y + r * cell - T / 2, w: T, h: cell + T });
+      if (r + 1 < rows && !open.has(`${u}-${u + cols}`)) walls.push({ x: spec.x + c * cell - T / 2, y: spec.y + (r + 1) * cell - T / 2, w: cell + T, h: T });
+    }
+    return { walls, cols, rows, cell, entrance, exit, route, passages };
+  }
+  throw new Error("no maze");
+}
+
+// ---- the puzzle house: the same house, but the bedroom and the study are mazes ----
+// Pets come in from the living room through a one-way door at the top of the bedroom maze, find the way to its far corner,
+// pass through a second one-way door into the study maze, and find their way out of that into the kitchen. There is no charger in
+// either maze. Each maze also has a locked emergency door: only the Teacher opens it, to let a trapped pet out.
+const MAZE_DOOR = 88; // the width of a corridor opening
+const bedroomArea = { x: 0, y: 700, cols: 10, rows: 7, cell: 100 }, studyArea = { x: 1000, y: 700, cols: 10, rows: 7, cell: 100 };
+export const BEDROOM_MAZE = makeMaze({ ...bedroomArea, seed: 11, minRoute: 30, entrance: { side: "top", index: 0 }, exit: { side: "right", index: 6 } });
+export const STUDY_MAZE = makeMaze({ ...studyArea, seed: 12, minRoute: 30, entrance: { side: "left", index: 6 }, exit: { side: "top", index: 9 } });
+const mazeOnly = (o: RoomObject, rooms: string[]) => !rooms.includes(o.room ?? "") || o.kind === "window";
+
+export const PUZZLE: Layout = buildLayout({
+  id: "puzzle",
+  width: HOUSE.width,
+  height: HOUSE.height,
+  rooms: HOUSE.rooms.map((r) => (r.id === "bedroom" || r.id === "study" ? { ...r, puzzle: true } : r)),
+  doors: [
+    HOUSE.doors.find((d) => d.id === "door-living-kitchen")!,
+    { id: "door-living-bedroom", a: "living", b: "bedroom", ...mazeDoor(bedroomArea, { side: "top", index: 0 }), width: MAZE_DOOR, oneWay: { from: "living" } }, // in, and no way back
+    { id: "door-bedroom-study", a: "bedroom", b: "study", ...mazeDoor(bedroomArea, { side: "right", index: 6 }), width: MAZE_DOOR, oneWay: { from: "bedroom" } },
+    { id: "door-kitchen-study", a: "kitchen", b: "study", ...mazeDoor(studyArea, { side: "top", index: 9 }), width: MAZE_DOOR, oneWay: { from: "study" } }, // out, and no way in
+    { id: "door-bedroom-emergency", a: "bedroom", b: "living", ...mazeDoor(bedroomArea, { side: "top", index: 3 }), width: MAZE_DOOR, oneWay: { from: "bedroom" }, emergency: true },
+    { id: "door-study-emergency", a: "study", b: "kitchen", ...mazeDoor(studyArea, { side: "top", index: 4 }), width: MAZE_DOOR, oneWay: { from: "study" }, emergency: true },
+  ],
+  objects: HOUSE.objects.filter((o) => mazeOnly(o, ["bedroom", "study"])),
+  extraWalls: [...BEDROOM_MAZE.walls, ...STUDY_MAZE.walls],
+});
+
+// ---- the house plus two maze rooms along its south side ----
+// The four rooms stay as they are. A pet can walk from the bedroom into the cellar, through that maze into the
+// vault, and out into the study. Both doors in are one-way, and each maze has a locked emergency door back upstairs.
+const cellarArea = { x: 0, y: 1400, cols: 10, rows: 7, cell: 100 }, vaultArea = { x: 1000, y: 1400, cols: 10, rows: 7, cell: 100 };
+export const CELLAR_MAZE = makeMaze({ ...cellarArea, seed: 21, minRoute: 30, entrance: { side: "top", index: 1 }, exit: { side: "right", index: 6 } });
+export const VAULT_MAZE = makeMaze({ ...vaultArea, seed: 22, minRoute: 30, entrance: { side: "left", index: 6 }, exit: { side: "top", index: 8 } });
+
+export const ANNEX: Layout = buildLayout({
+  id: "annex",
+  width: HOUSE.width,
+  height: HOUSE.height + 700,
+  rooms: [
+    ...HOUSE.rooms,
+    { id: "cellar", name: "Cellar", x: 0, y: 1400, w: 1000, h: 700, floor: "stone", puzzle: true },
+    { id: "vault", name: "Vault", x: 1000, y: 1400, w: 1000, h: 700, floor: "tile", puzzle: true },
+  ],
+  doors: [
+    ...HOUSE.doors,
+    { id: "door-bedroom-cellar", a: "bedroom", b: "cellar", ...mazeDoor(cellarArea, { side: "top", index: 1 }), width: MAZE_DOOR, oneWay: { from: "bedroom" } },
+    { id: "door-cellar-vault", a: "cellar", b: "vault", ...mazeDoor(cellarArea, { side: "right", index: 6 }), width: MAZE_DOOR, oneWay: { from: "cellar" } },
+    { id: "door-vault-study", a: "vault", b: "study", ...mazeDoor(vaultArea, { side: "top", index: 8 }), width: MAZE_DOOR, oneWay: { from: "vault" } },
+    { id: "door-cellar-emergency", a: "cellar", b: "bedroom", ...mazeDoor(cellarArea, { side: "top", index: 5 }), width: MAZE_DOOR, oneWay: { from: "cellar" }, emergency: true },
+    { id: "door-vault-emergency", a: "vault", b: "study", ...mazeDoor(vaultArea, { side: "top", index: 3 }), width: MAZE_DOOR, oneWay: { from: "vault" }, emergency: true },
+  ],
+  objects: [
+    ...HOUSE.objects,
+    o("cellar", "window-cellar", "window", 200, 2088, 200, 12),
+    o("vault", "window-vault", "window", 1500, 2088, 200, 12),
+  ],
+  extraWalls: [...CELLAR_MAZE.walls, ...VAULT_MAZE.walls],
+});
+
+export const LAYOUTS: Record<string, Layout> = { legacy: LEGACY, house: HOUSE, puzzle: PUZZLE, annex: ANNEX };

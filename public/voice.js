@@ -9,6 +9,9 @@
 //
 // Where a model cannot run (no WebGPU or too slow), the browser's own voice is used instead so it always speaks.
 
+// Paused so Kokoro and Whisper stay out of memory while a larger local model is loaded.
+const VOICE_PAUSED = true;
+
 const KOKORO_URL = "https://cdn.jsdelivr.net/npm/kokoro-js@1.2.1/+esm";
 const TRANSFORMERS_URL = "https://cdn.jsdelivr.net/npm/@huggingface/transformers@3.5.1/+esm";
 const KOKORO_MODEL = "onnx-community/Kokoro-82M-v1.0-ONNX";
@@ -81,6 +84,7 @@ function audioCtx() {
 }
 
 async function loadKokoro() {
+  if (VOICE_PAUSED) return;
   if (S.kokoroState === "loading" || S.kokoroState === "ready") return;
   S.kokoroState = "loading";
   try {
@@ -198,6 +202,7 @@ function beep(freq, dur, vol = 0.15) {
 const rec = { stream: null, ctx: null, node: null, chunks: [], active: false, asr: null, asrLoading: null };
 
 async function loadAsr() {
+  if (VOICE_PAUSED) return null;
   if (rec.asr) return rec.asr;
   if (!rec.asrLoading) {
     note("Loading the listening model (first time only)…");
@@ -213,6 +218,7 @@ async function loadAsr() {
 }
 
 async function startTalking() {
+  if (VOICE_PAUSED) { note("Voices are paused to free memory for the local model."); return; }
   if (rec.active) return;
   rec.active = true;
   $("ptt")?.classList.add("bg-red-500"); $("ptt3d")?.classList.add("bg-red-500");
@@ -286,6 +292,14 @@ function paint() {
 
 function init() {
   if (!$("voice-on")) return;
+  if (VOICE_PAUSED) {
+    S.on = false;
+    paint();
+    $("voice-on").disabled = true;
+    $("voice-on").textContent = "Voices paused";
+    note("Voices are paused to free memory for the local model.");
+    return;
+  }
   fetch("/api/world").then((r) => r.json()).then((w) => { if (w.teacherVoice) S.teacherVoice = w.teacherVoice; }).catch(() => {});
   $("voice-on").onclick = () => {
     S.on = !S.on; ls.set("on", S.on ? 1 : 0); paint();
