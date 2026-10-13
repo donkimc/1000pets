@@ -276,8 +276,9 @@ export class Simulation {
     closeLoop(p, obs);
     observePlaces(p, obs, this.simSec, !!p.enteredDoorway);
     noteTread(p);
-    noteRoute(p, obs, this.simSec, !!p.enteredDoorway);
+    noteRoute(p, obs, this.simSec, !!p.enteredDoorway, !!p.emergencyDoorway);
     p.enteredDoorway = false;
+    p.emergencyDoorway = false;
     const surprises = [...updateCues(p, obs, this.simSec, DT), ...updatePredictions(p, obs, this.simSec)];
     for (const sur of surprises) captureSurpriseScene(p, obs, this.simSec, rng, sur); // a broken expectation is worth remembering
     watchScenes(p, obs, this.simSec, rng);
@@ -304,6 +305,14 @@ export class Simulation {
     p.rngState = rng.state;
   }
 
+  private doorwayAt(x: number, y: number) {
+    for (const d of this.world.layout.doors) {
+      const r = this.world.layout.doorRects[d.id];
+      if (x > r.x - 8 && x < r.x + r.w + 8 && y > r.y - 8 && y < r.y + r.h + 8) return d;
+    }
+    return undefined;
+  }
+
   private noteSensed(p: PetState, obs: Observation) {
     const side = (b: number) => (Math.abs(b) < 0.25 ? "ahead" : b > 0 ? "to the right" : "to the left");
     const m = p.mind;
@@ -323,9 +332,9 @@ export class Simulation {
     if (obs.touch === "pad") this.note(p, "stood on the charging pad");
     if (obs.touch === "door") this.note(p, "bumped into a shut door");
     // Walking through a doorway is something the pet can feel (the floor changes under it for a step or two).
-    const inDoor = Object.values(this.world.layout.doorRects).some((r) => p.x > r.x - 8 && p.x < r.x + r.w + 8 && p.y > r.y - 8 && p.y < r.y + r.h + 8);
-    if (inDoor && !p.inDoorway) { this.note(p, "passed through a doorway"); p.enteredDoorway = true; }
-    p.inDoorway = inDoor;
+    const under = this.doorwayAt(p.x, p.y);
+    if (under && !p.inDoorway) { this.note(p, "passed through a doorway"); p.enteredDoorway = true; if (under.emergency) p.emergencyDoorway = true; }
+    p.inDoorway = !!under;
   }
 
   private note(p: PetState, text: string) {
@@ -397,7 +406,10 @@ export class Simulation {
       moved += step;
       trace.push({ x: p.x - startX, y: p.y - startY });
       // (a tick covers up to 150 units, so a doorway can be crossed between two ticks: it is felt on the way)
-      if (!p.inDoorway && !crossed && Object.values(this.world.layout.doorRects).some((r) => nx > r.x - 8 && nx < r.x + r.w + 8 && ny > r.y - 8 && ny < r.y + r.h + 8)) crossed = true;
+      if (!p.inDoorway && !crossed) {
+        const under = this.doorwayAt(nx, ny);
+        if (under) { crossed = true; if (under.emergency) p.emergencyDoorway = true; }
+      }
     }
     if (crossed) p.enteredDoorway = true;
     p.speed = moved / DT;

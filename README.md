@@ -12,12 +12,15 @@ The long-term goal is not to build a chatbot inside a cute shell. The goal is to
 
 ## Current implementation status
 
-This document is the long-term design. What is built today is a running software 2D simulator with three pets, a
+This document is the long-term design. What is built today runs on your own machine (`npm run dev`). It is a software 2D simulator with three pets, a
 human avatar, System 1 (rules) and System 2 (slow LLM thinking), scene memory, a learned charger hum, sleep
 consolidation, dreams, prediction and surprise, belief verification, relationships, optional self-tuned habits, an AI Teacher,
-saves and brain export/import, a four-room house with doors the pets open, a first-person 3D view with a minimap, spoken voices
-(a different one for each pet and the Teacher) and walkie-talkie speech input, and a tabbed dashboard. See [HANDOFF.md](HANDOFF.md) for how to run it, the
-environment variables, and a detailed description and measurements for each feature.
+saves and brain export/import, and a first-person 3D view with a minimap, spoken voices
+(a different one for each pet and the Teacher) and walkie-talkie speech input, and a tabbed dashboard.
+
+The house has four rooms (living room, kitchen, bedroom, study). `LAYOUT=annex` keeps those rooms and adds two maze rooms under them, a cellar and a vault, with one-way doors and a Teacher rescue. A pet's intention can hold what it does for hours (`stay_with`, `go_to_door`, `go_to_pad`, `watch`, `rest_near`) when its notes already support that choice; empty battery, a wall, deep sleep, and being led out of a maze still come first. `INTENTION_DOING=off` restores the older drive ladder.
+
+See [HANDOFF.md](HANDOFF.md) for how to run it, the environment variables, and a detailed description and measurements for each feature.
 
 ## What it looks like
 
@@ -1906,4 +1909,30 @@ virtual + physical pets sharing the same cognitive architecture
 ```
 
 The long-term ambition is a pet that does not merely answer questions, but **develops a small ongoing life of its own inside the limits of its environment and architecture**.
+
+---
+
+## License
+
+MIT License
+
+Copyright (c) 2026 Don Kim
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in all
+copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+SOFTWARE.
 

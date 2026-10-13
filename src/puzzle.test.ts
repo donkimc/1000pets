@@ -135,10 +135,10 @@ test("a pet stuck in a maze for too long, or with a low battery, is led out by t
   const [pip, moss, coco] = sim.pets;
   place(moss, 800, 100); place(coco, 900, 100);
   sim.human.x = 100; sim.human.y = 100; sim.teacher.x = 400; sim.teacher.y = 300;
-  place(pip, 450, 1050, 0); pip.energy = 22; pip.drives.rest = 0; pip.drives.curiosity = 0; pip.drives.social = 0; // somewhere in the bedroom maze with a low battery
+  place(pip, 450, 1050, 0); pip.energy = 22; pip.mode = "sleeping"; pip.drives.rest = 0.95; pip.drives.curiosity = 0; pip.drives.social = 0; // asleep in the bedroom maze, battery low: a corner must not end the rescue
   pip.roomSince = 0;
   let t = 0;
-  for (; t < 40 * 60 && roomAt(PUZZLE, pip.x, pip.y)?.puzzle !== false; t += 5) { sim.step((t + 5) * 1000); teacher.tick(); pip.energy = Math.max(pip.energy, 22); }
+  for (; t < 40 * 60 && roomAt(PUZZLE, pip.x, pip.y)?.puzzle; t += 5) { sim.step((t + 5) * 1000); teacher.tick(); pip.energy = Math.max(pip.energy, 22); }
   assert.equal(teacher.rescue.history.length, 1);
   assert.match(teacher.rescue.history[0].why, /battery/);
   assert.match(events[0], /doorLocked door-bedroom-emergency false/);
@@ -172,7 +172,14 @@ test("a pet being led keeps to the nearest moving thing in sight, and looks for 
   place(pip, 1600, 200, 0); pip.energy = 90; pip.s1.holdUntil = 0; pip.drives.rest = 0;
   sim.teacher.x = 1720; sim.teacher.y = 200; // ahead of it, in view
   pip.s1.guidedUntil = 1e9;
+  pip.mode = "sleeping"; pip.drives.rest = 0.95;
+  pip.s1.guidePath = [{ x: 1900, y: 200 }, { x: 2100, y: 200 }];
   let now = 100;
+  const led = decide(pip, sense(pip, sim.pets, sim.world, [], now, new Rng(1), sim.human, sim.teacher), new Rng(2), now);
+  assert.equal(led.action, "follow_guide");
+  assert.match(led.reason, /way the Teacher is leading/);
+  assert.ok(led.forward > 0.5, "a sleeping pet still walks the path");
+  pip.mode = "idle"; pip.drives.rest = 0; pip.s1.guidePath = undefined; pip.s1.guideStep = undefined;
   const look = () => decide(pip, sense(pip, sim.pets, sim.world, [], now, new Rng(1), sim.human, sim.teacher), new Rng(2), now);
   const d = look();
   assert.equal(d.action, "follow_guide");

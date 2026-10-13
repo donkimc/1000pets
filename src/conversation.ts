@@ -1,6 +1,7 @@
 // Conversation layer: turns a pet's intent into English (expression) and turns English it hears into a grounded
 // reply plus unverified claims (interpretation). The LLM is only a language layer here: whether a pet may speak
 // is decided by System 1 (canSpeak), and what it says comes from its own notes.
+import { intentionSettings, speechAboutIntention } from "./intention.js";
 import { LlmUnavailable, type ChatMessage, type CompleteOpts, type LlmResult } from "./llm.js";
 import type { PetState } from "./pet.js";
 import type { Simulation } from "./sim.js";
@@ -114,6 +115,8 @@ export class Conversation implements SpeechHook {
       msSinceLastSpoke: now - (this.lastSpokeMs.get(p.id) ?? 0), msSinceLastPetUtterance: now - this.lastPetUtteranceMs, petChainLength: this.petChain,
     });
     if (!gate.ok) return this.recordSilence(p, gate.reason, say.meaning);
+    const goal = p.mind.intention?.goal;
+    if (intentionSettings.on && p.mind.intention?.doing && goal && !speechAboutIntention(goal, say.meaning)) return this.recordSilence(p, "it was not about what I am doing", say.meaning);
     const text = await this.express(p, say.meaning);
     if (!text || this.disposed) return;
     await this.deliver(p, say.to === "all" ? { kind: "all" } : { kind: "nearest" }, text, {

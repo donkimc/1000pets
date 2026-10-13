@@ -73,6 +73,21 @@ test("restless in a passage, it walks back along its own track to a remembered w
   routeSettings.on = false;
 });
 
+test("leaving through an emergency door is not remembered as a way out", () => {
+  const p = pet();
+  let t = walk(p, [[0, 0]], 0);
+  t = walk(p, line(0, 0, 400, 0), t);
+  const mx = 400 - p.odo.x;
+  p.odo = { x: 400, y: 0 }; p.moved = { x: mx, y: 0 }; p.moveTrace = [{ x: mx, y: 0 }];
+  noteRoute(p, obs, t + 5, true, true);
+  const pg = p.places!.passage!;
+  assert.equal(pg.escapes.length, 0, "the emergency door locks again, so that path is not a way out");
+  assert.ok(pg.track.length <= 1, "and the passage ends there");
+  p.odo = { x: 0, y: 0 };
+  walk(p, [[0, 0], ...line(0, 0, 400, 0)], t + 400, true);
+  assert.equal(pg.escapes.length, 1, "an ordinary doorway still is");
+});
+
 test("switched off it never steers, and old saves without a passage record still run", () => {
   routeSettings.on = false;
   const p = pet();

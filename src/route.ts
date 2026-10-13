@@ -98,8 +98,8 @@ function remember(pg: Passage, path: Pt[], now: number): void {
   }
 }
 
-/** Every tick, after the pet has moved: keeps the track, notices a way out being completed. */
-export function noteRoute(p: PetState, obs: Observation, nowSec: number, enteredDoorway: boolean): void {
+/** Every tick, after the pet has moved: keeps the track, notices a way out being completed. An emergency door locks again once the Teacher has used it, so leaving through one is not a way out to remember. */
+export function noteRoute(p: PetState, obs: Observation, nowSec: number, enteredDoorway: boolean, emergency = false): void {
   const pm = (p.places = repairPlaces(p.places ?? newPlaces()));
   const pg = (pm.passage = repairPassage(pm.passage));
   const here = { x: p.odo.x, y: p.odo.y };
@@ -110,7 +110,7 @@ export function noteRoute(p: PetState, obs: Observation, nowSec: number, entered
   const closed = !!obs.grid && obs.grid.length >= GRID_N && closedIn(obs.grid);
   if (closed) { pg.closedSince ??= nowSec; pg.openSince = null; } else { pg.openSince ??= nowSec; }
   if (enteredDoorway) { // through a doorway: whatever it walked since it came in is a way out of there
-    remember(pg, [...pg.track, rnd(here)], nowSec);
+    if (!emergency) remember(pg, [...pg.track, rnd(here)], nowSec);
     pg.track = []; pg.home = null; pg.closedSince = null; pg.coolUntil = nowSec + COOLDOWN_SEC;
   } else if (pg.openSince !== null && nowSec - pg.openSince > OPEN_SEC) {
     if (pg.track.length) remember(pg, [...pg.track, rnd(here)], nowSec);

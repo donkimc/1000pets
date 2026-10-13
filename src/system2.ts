@@ -2,7 +2,8 @@
 // through the LLM gateway, updates its beliefs / intention, and may nudge System 1. It runs off the tick
 // path: a slow or failed model call never delays the simulation.
 import { LlmGateway, LlmUnavailable } from "./llm.js";
-import { SUGGESTIONS, type Belief, type PetState, type Suggestion } from "./pet.js";
+import { doingSupported, isDoing } from "./intention.js";
+import { SUGGESTIONS, type Belief, type Doing, type PetState, type Suggestion } from "./pet.js";
 import type { Simulation } from "./sim.js";
 import type { Store } from "./store.js";
 import { describeScene, describeSceneShort, markUsed, selectScenes } from "./scenes.js";
@@ -20,6 +21,7 @@ export interface ParsedThought {
   thought: string;
   beliefs: { text: string; confidence: number }[];
   intention: string | null;
+  doing: Doing | null;
   dropIntention: boolean;
   suggestion: Suggestion;
   say: { to: "nearest" | "all"; meaning: string } | null;
@@ -127,7 +129,7 @@ export function situation(p: PetState, room: string, nearby: number): string {
   return [
     room, awake, Math.floor(p.energy / 20), Math.floor(p.drives.curiosity * 4), Math.floor(p.drives.social * 4), Math.floor(p.drives.rest * 4),
     nearby, m.sensed.tone ? 1 : 0, m.scenes.length, lastScene, lastSurprise,
-    m.claims.length, m.beliefs.length, m.dreams.length ? m.dreams[m.dreams.length - 1].id : "", m.lastSleep ? m.lastSleep.atSec : 0, m.intention ? m.intention.goal : "",
+    m.claims.length, m.beliefs.length, m.dreams.length ? m.dreams[m.dreams.length - 1].id : "", m.lastSleep ? m.lastSleep.atSec : 0, m.intention ? m.intention.goal : "", m.intention?.doing ?? "",
   ].join("|");
 }
 
@@ -135,13 +137,16 @@ function systemCompact(habits: boolean): string {
   return `You are the slow inner voice (System 2) of a small pet in a house with other pets, a human and a wise Teacher (it explains things, answers questions, can change a room). You are not an assistant. Use only the notes below; never invent places, objects or events.\n` +
     `Pick ONE useful question about your situation, reflect briefly, and reply with ONLY a JSON object:\n` +
     `{"question": string (max 100), "thought": string (1-2 sentences, first person), "beliefs": [{"text": string (max 80), "confidence": number 0-1}] (0-3, only if the notes support them), ` +
-    `"intention": string or null (a goal for hours or days, max 80; null keeps the current one), "drop_intention": boolean, "suggestion": one of ${SUGGESTIONS.map((x) => `"${x}"`).join(", ")}, ` +
+    `"intention": string or null (a goal for hours or days, max 80; null keeps the current one), "drop_intention": boolean, ` +
+    `"doing": null or one of "stay_with", "go_to_door", "go_to_pad", "watch", "rest_near" (what you will actually do about the intention; null keeps the current action), ` +
+    `"suggestion": one of ${SUGGESTIONS.map((x) => `"${x}"`).join(", ")}, ` +
     `"say": null or {"to": "nearest" or "all", "meaning": string (max 100, plain ideas)}, "ask_teacher": null or string (max 120; rarely), ` +
     `"retract": [string] (your beliefs, as written, that you now think are wrong; usually empty)` +
     (habits ? `, "tune": null or {"habit": one of ${KNOB_NAMES.map((k) => `"${k}"`).join(", ")}, "direction": "up" or "down", "why": string (max 100 chars)} (almost always null; a small change to one habit, tried for a day and kept only if it truly helps)` : ``) + `}\n` +
     `Write belief text as plain words only: never copy numbers or "how sure" values into it. Ask something new, not a recent question. "say" only if someone is within earshot and it is worth saying. ` +
     `Never state as fact something you only heard from others. A dream is not a memory: nothing in a dream happened, so never put anything from a dream in "beliefs"; turn its worry into a question or an intention to look into. ` +
-    `If your own experience contradicts something you believed or were told, let it go and do not take it up again.`;
+    `If your own experience contradicts something you believed or were told, let it go and do not take it up again. ` +
+    `Set "doing" only when the notes already show a reason: someone you have seen, a doorway, a pad you have charged on, or something just in front of you. The intention sentence must be about that same thing.`;
 }
 
 /** The pet's notes for a routine thought: the same kinds of fact, fewer of each, slow-changing first, fast-changing last. */
@@ -198,7 +203,8 @@ export function buildPrompt(p: PetState, day: number, timeOfDay: number, nearby 
     `"beliefs": [{"text": string (max 80 chars), "confidence": number 0-1}] (0-3 items, only if the notes support them), ` +
     `"intention": string or null (a goal that could last hours or days, max 80 chars; null keeps your current one), ` +
     `"drop_intention": boolean, ` +
-    `"suggestion": one of ${SUGGESTIONS.map((x) => `"${x}"`).join(", ")} (a nudge to your fast System 1), ` +
+    `"doing": null or one of "stay_with", "go_to_door", "go_to_pad", "watch", "rest_near" (what you will actually do about the intention; null keeps the current action), ` +
+    `"suggestion": one of ${SUGGESTIONS.map((x) => `"${x}"`).join(", ")} (a nudge to your fast System 1, used only when doing is null), ` +
     `"say": null or {"to": "nearest" or "all", "meaning": string (max 100 chars: what you want to tell or ask, as plain ideas, not a sentence)}, ` +
     `"ask_teacher": null or string (a real question or request for the Teacher, max 120 chars; use it rarely, only when you are truly puzzled or in need of help), ` +
     `"retract": [string] (beliefs of yours, quoted as written, that you now think are wrong; usually empty)` +
@@ -208,7 +214,8 @@ export function buildPrompt(p: PetState, day: number, timeOfDay: number, nearby 
     `Use "say" only if someone is within earshot and you have something genuinely worth telling or asking; otherwise null. ` +
     `Never state as fact something you only heard from others. A dream is not a memory: nothing in a dream happened, so never put anything from a dream in "beliefs"; ` +
     `if a dream's worry seems worth checking, turn it into a question or an intention to look into, not a belief. ` +
-    `If your own experience contradicts something you believed or were told, let it go and do not take it up again.`;
+    `If your own experience contradicts something you believed or were told, let it go and do not take it up again. ` +
+    `Set "doing" only when the notes already show a reason: someone you have seen, a doorway, a pad you have charged on, or something just in front of you. The intention sentence must be about that same thing.`;
   if (!deep) return { system, user: buildNotes(p, day, timeOfDay, nearby, nowSec, habits) };
   // A rare, careful moment: look back over the last few thoughts and correct what was mistaken or stuck in a loop.
   const recent = p.mind.recentThoughts.length ? p.mind.recentThoughts.map((t) => `- ${t}`).join("\n") : "- (none yet)";
@@ -241,11 +248,12 @@ export function parseThought(text: string): ParsedThought | null {
   const retract = Array.isArray(raw.retract) ? raw.retract.filter((x: unknown) => typeof x === "string" && x.trim()).slice(0, 3).map((x: string) => cleanBelief(str(x, 80))) : [];
   const suggestion = SUGGESTIONS.includes(raw.suggestion) ? (raw.suggestion as Suggestion) : "none";
   const intention = typeof raw.intention === "string" && raw.intention.trim() ? str(raw.intention, 80) : null;
+  const doing = isDoing(raw.doing) ? raw.doing : null;
   const sayMeaning = str(raw.say?.meaning, 100);
   const say = sayMeaning ? { to: raw.say?.to === "all" ? ("all" as const) : ("nearest" as const), meaning: sayMeaning } : null;
   const askTeacher = str(raw.ask_teacher, 120) || null;
   const tune = raw.tune && KNOB_NAMES.includes(raw.tune.habit) && (raw.tune.direction === "up" || raw.tune.direction === "down") ? { habit: raw.tune.habit as KnobName, direction: raw.tune.direction as "up" | "down", why: str(raw.tune.why, 100) || "I thought it over" } : null;
-  return { question: str(raw.question, 100), thought: str(raw.thought, 300), beliefs, intention, dropIntention: raw.drop_intention === true, suggestion, say, askTeacher, retract, tune };
+  return { question: str(raw.question, 100), thought: str(raw.thought, 300), beliefs, intention, doing, dropIntention: raw.drop_intention === true, suggestion, say, askTeacher, retract, tune };
 }
 
 const norm = (s: string) => s.toLowerCase().replace(/[^a-z0-9 ]/g, "").trim();
@@ -281,7 +289,12 @@ export function applyThought(p: PetState, t: ParsedThought, nowSec: number): voi
     m.beliefs.length = MAX_BELIEFS;
   }
   if (t.dropIntention) m.intention = null;
-  if (t.intention && t.intention !== m.intention?.goal) m.intention = { goal: t.intention, sinceSec: nowSec };
+  else if (t.doing) {
+    if (doingSupported(p, t.doing)) {
+      const goal = t.intention || m.intention?.goal;
+      if (goal && !(m.intention?.goal === goal && m.intention.doing === t.doing)) m.intention = { goal, sinceSec: nowSec, doing: t.doing, progressSec: nowSec };
+    }
+  } else if (t.intention && t.intention !== m.intention?.goal) m.intention = { goal: t.intention, sinceSec: nowSec };
   m.suggestion = t.suggestion === "none" ? null : { kind: t.suggestion, untilSec: nowSec + 600 };
   m.lastThoughtSec = nowSec;
 }

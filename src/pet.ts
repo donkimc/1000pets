@@ -42,8 +42,10 @@ export interface S1State {
   doorCooldownUntil?: number; // not curious about doorways again before this
   passUntil?: number; // walking straight through a doorway until then
   guideSeen?: { at: number; bearing: number }; // where the Teacher was last seen, while being led
+  guidePath?: { x: number; y: number }[]; // the way the Teacher is leading, in world coordinates, only while a rescue lasts
+  guideStep?: number; // the next point of guidePath
   exploreUntil?: number; // keeping to a passage (exploring by what it has trodden least) until then
-  guidedUntil?: number; // being led (by the Teacher, out of a maze): follow the nearest moving thing in sight until then
+  guidedUntil?: number; // being led (by the Teacher, out of a maze) until then
 }
 
 export interface PetState {
@@ -63,6 +65,7 @@ export interface PetState {
   bumped: boolean;
   places?: PlaceMap; // the landmarks it knows and the runs between them, in its own frame (see places.ts)
   enteredDoorway?: boolean; // set for one tick when it steps into a doorway
+  emergencyDoorway?: boolean; // that doorway was an emergency door, which locks again, so it is not a way out to remember
   anchors?: Record<string, { x: number; y: number }>; // where it reckoned each charger pad to be (by its hum), to correct drift
   room?: string; // the room it was in at the last tick (to count crossings)
   roomSince?: number; // since when (simulated seconds) it has been in that room
@@ -88,6 +91,10 @@ export interface PetState {
 export type Suggestion = "none" | "seek_light" | "find_pet" | "inspect_object" | "rest" | "follow_tone";
 export const SUGGESTIONS: readonly Suggestion[] = ["none", "seek_light", "find_pet", "inspect_object", "rest", "follow_tone"];
 
+/** What an intention makes the body do. Each one is a walk the pet can already make. */
+export type Doing = "stay_with" | "go_to_door" | "go_to_pad" | "watch" | "rest_near";
+export const DOINGS: readonly Doing[] = ["stay_with", "go_to_door", "go_to_pad", "watch", "rest_near"];
+
 /** Something another voice asserted. Speech is a claim, not a fact, until the pet verifies it itself. */
 export interface Claim { text: string; from: string; tSec: number; status: "unverified" | "supported" | "contradicted"; why?: string; checkedSec?: number; fromKey?: string; counted?: "supported" | "contradicted" } // why: what the pet's own experience showed
 
@@ -97,7 +104,7 @@ export interface Belief { text: string; confidence: number; updatedSec: number; 
 export interface Mind {
   beliefs: Belief[];
   question: string;
-  intention: { goal: string; sinceSec: number } | null;
+  intention: { goal: string; sinceSec: number; doing?: Doing; progressSec?: number; mark?: number; heldSince?: number } | null;
   suggestion: { kind: Suggestion; untilSec: number } | null;
   claims: Claim[]; // things heard from others, newest last
   episodes: string[]; // short notes of recent experience, newest last

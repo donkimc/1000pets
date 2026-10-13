@@ -9,6 +9,7 @@ import { pickCompany } from "./relations.js";
 import { placeSteer } from "./places.js";
 import { exploreSteer } from "./explore.js";
 import { routeSteer } from "./route.js";
+import { followIntention } from "./intention.js";
 import { ruleValue, type KnobName } from "./rules.js";
 
 export type Action =
@@ -69,6 +70,19 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
   // 0. Out of energy: nothing but a slow trickle of recovery.
   if (p.mode === "dormant") return stay("dormant", "battery empty, powered down");
 
+  // Being led along a path the Teacher worked out. This comes before sleep: a rescue has to wake a pet that has lain down in a maze,
+  // and the path stays followable around a corner, where the Teacher itself is out of sight.
+  if (nowSec < (s1.guidedUntil ?? 0) && s1.guidePath && s1.guidePath.length) {
+    let i = s1.guideStep ?? 0;
+    while (i < s1.guidePath.length && Math.hypot(p.x - s1.guidePath[i].x, p.y - s1.guidePath[i].y) < 40) i++;
+    s1.guideStep = i;
+    const wp = s1.guidePath[i];
+    if (!wp) return { action: "follow_guide", reason: "the way out is just ahead", forward: 0.6, turn: 0 };
+    const bearing = normAngle(Math.atan2(wp.y - p.y, wp.x - p.x) - p.heading);
+    const forward = Math.abs(bearing) > 1.2 ? 0.1 : 0.85;
+    return { action: "follow_guide", reason: "following the way the Teacher is leading", forward, turn: clamp(bearing, -MAX_TURN, MAX_TURN) };
+  }
+
   // 1. Sleep keeps going until rested (or morning and mostly rested).
   const night = isNight(obs.timeOfDay);
   const wantSleep = d.rest + boost("rest") > rv("sleepRest") || (night && d.rest + boost("rest") > rv("sleepRestNight"));
@@ -116,6 +130,10 @@ export function decide(p: PetState, obs: Observation, rng: Rng, nowSec: number):
     if (last && nowSec - last.at < 8) return { action: "follow_guide", reason: "going on where the Teacher was last seen", forward: 0.6, turn: clamp(last.bearing, -MAX_TURN, MAX_TURN) * 0.5 };
     return { action: "follow_guide", reason: "looking for the Teacher", forward: 0.1, turn: 0.6 };
   }
+
+  // An intention holds the next action when the notes support it. Reflexes above still win. No intention: the ladder below is unchanged.
+  const held = followIntention(p, obs, nowSec);
+  if (held) return held;
 
   const needEnergy = 1 - obs.energy / 100;
 

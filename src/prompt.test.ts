@@ -37,7 +37,7 @@ test("the compact prompt keeps every rule and every kind of fact, in fewer words
   const { sim, p } = busyPet();
   const c = buildPrompt(p, day(sim), tod(sim), 1, sim.simSec, false, false, "compact");
   for (const rule of [/"retract": \[string\]/, /never copy numbers or "how sure" values/, /nothing in a dream happened, so never put anything from a dream in "beliefs"/, /let it go and do not take it up again/, /Never state as fact something you only heard from others/, /Ask something new/, /ONLY a JSON object/]) assert.match(c.system, rule);
-  for (const field of ["question", "thought", "beliefs", "intention", "drop_intention", "suggestion", "say", "ask_teacher"]) assert.match(c.system, new RegExp(`"${field}"`), field);
+  for (const field of ["question", "thought", "beliefs", "intention", "drop_intention", "doing", "suggestion", "say", "ask_teacher"]) assert.match(c.system, new RegExp(`"${field}"`), field);
   assert.doesNotMatch(c.system, /"tune"/, "habits are only mentioned when learning is on");
   assert.match(buildPrompt(p, day(sim), tod(sim), 1, sim.simSec, false, true, "compact").system, /"tune": null or \{"habit"/);
   assert.match(c.user, /You are Pip\./);
